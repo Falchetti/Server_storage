@@ -18,8 +18,8 @@ idem per il flag t, solo le richieste a lui successive avranno quello specifico 
 
 #define N_FLAG 13
 #define SZ_STRING 1000
-#define MSEC_TENT 1000  //un tentativo al secondo nella open Connection
-#define SEC_TIMEOUT 5 //timeout di 30 secondi nella openConnection
+#define MSEC_TENT 1000  //un tentativo al secondo nella openConnection
+#define SEC_TIMEOUT 10 //secondi prima del timeout nella openConnection
 
 
 //int isNumber(void *);
@@ -39,6 +39,7 @@ int main(int argc, char *argv[]){
 
 	
 	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:p")) != -1) && !found_h ){
+		
 		#ifdef DEBUG 
 			printf("t_requests = %d, found_r = %d, found_w = %d, found_p = %d\n", t_requests, found_r, found_w, found_p);
 			if( d_read != NULL)   
@@ -57,11 +58,13 @@ int main(int argc, char *argv[]){
 			case 'h' :
 				
 				found_h = 1; //assicurati che così termini subito, guarda se anche in fondo la gestione va bene
+				break;
 				
 			case 'f' : 
 				
 				if(socket_name == NULL){
 					socket_name = optarg;
+					
 					struct timespec timeout;
 					clock_gettime(CLOCK_REALTIME,&timeout);
 					timeout.tv_sec += SEC_TIMEOUT;
@@ -73,7 +76,7 @@ int main(int argc, char *argv[]){
 					}
 				}
 				else
-					printf("L'opzione f può essere richiesta una sola volta\n"); //stampo questo e ignoro il secondo f 
+					printf("L'opzione f può essere richiesta una sola volta\n"); //stampo questo e ignoro gli f successivi al primo
 	
 				break;
 				
@@ -165,6 +168,11 @@ int main(int argc, char *argv[]){
 	
 	if(found_h)
 		printf("flag h: Le opzioni accettate sono hf:w:W:D:r:R:d:t:l:u:c:p\n");
+
+    if(closeConnection(socket_name) == -1){
+		perror("Errore in closeConnection");
+		exit(errno);
+	}
 	
 	return 0;
 	
