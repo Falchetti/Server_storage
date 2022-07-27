@@ -1,7 +1,7 @@
-CC = gcc
+CC = gcc 
 
 #qui da aggiungere c99 
-CFLAGS = -Wall -pedantic
+CFLAGS = -Wall -pedantic 
 
 TARGETS = server.o client.o clean test
 
@@ -10,8 +10,8 @@ all	: $(TARGETS)
 
 .PHONY : clean 
 
-server.o : server.c 
-	$(CC) $(CFLAGS) $^ -o $@
+server.o : server.c icl_hash.c 
+	$(CC) $(CFLAGS)  $^ -o $@
 
 #controlla qui se mettere -c e come gestire i file.h 
 client.o : client.c api.c 
@@ -24,4 +24,4 @@ clean :
 
 #questo test probabilmente sarà sostituito con uno script 
 test : 
-	./client.o -f /home/giulia/Server_storage/mysock & ./server.o
+	./client.o -f /home/giulia/Server_storage/mysock -r pippo -r pluto -f sock -r paperondepaperoni -r qui -r pippo -r quo -h & ./server.o

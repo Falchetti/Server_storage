@@ -1,14 +1,3 @@
-/*
-int openConnection(const char* sockname, int msec, const struct timespec abstime)
-
-Viene aperta una connessione AF_UNIX al socket file sockname. 
-Se il server non accetta immediatamente la richiesta di connessione, 
-la connessione da parte del client viene ripetuta dopo ‘msec’ millisecondi 
-e fino allo scadere del tempo assoluto ‘abstime’ specificato come terzo argomento. 
-
-Ritorna 0 in caso di successo, -1 in caso di fallimento, errno viene settato opportunamente.
-NB: devi settare errno*/
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdlib.h>
@@ -19,11 +8,13 @@ NB: devi settare errno*/
 #include <stdio.h>
 #include <sys/un.h>
 #include "api.h" 
-#define UNIX_PATH_MAX 108 //lunghezza massima path 
+#define UNIX_PATH_MAX 108 //lunghezza massima path
+#define MSG_SIZE  50 
 #define DEBUG
+#undef DEBUG
 
 
-int fd_s; //fd socket 
+int fd_s = -1; //fd socket 
 char sck_name[UNIX_PATH_MAX]; //nome del socket
 int connected = 0; //mi ricordo se la connessione è avvenuta o meno, serve???
 //potrei usare direttamente fd_s
@@ -52,17 +43,16 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 	sa.sun_family = AF_UNIX;
 	int t = 0;
 	
-	while (((i = connect(fd_s, (struct sockaddr *) &sa, sizeof(sa))) == -1) && ((t = isTimeout(time, abstime)) == 0) ){
+	while (((i = connect(fd_s, (struct sockaddr *) &sa, sizeof(sa))) == -1) && ((t = isTimeout(time, abstime)) == 0) )
 			sleep(msec/1000); //è attesa attiva? 
-	}
-		
+			
 	if (t){
 		errno = ETIMEDOUT;
 		perror("Errore, Timeout sopraggiunto");
 		return -1;
 	}
 	
-	connected = 1;
+	connected = 1; //serve?
 	
 	#ifdef DEBUG
 		char *buf = malloc(6*sizeof(char));
@@ -98,7 +88,7 @@ int closeConnection(const char *sockname){
 	errno = 0;
 	if(strcmp(sockname, sck_name) == 0){ //controlla se va bene strcmp
 		if(fd_s != -1){ //mi assicuro che non fosse già stato chiuso 
-		    if(write(fd_s, "disconnected", 12) == -1){//le write dovranno essere riviste (atomicità)
+		    if(write(fd_s, "disconnesso", 12) == -1){//le write dovranno essere riviste (atomicità)
 				perror("Errore nella write");
 				return -1;
 			}
@@ -107,8 +97,8 @@ int closeConnection(const char *sockname){
 				return -1;
 			}
 		}
-		else 
-			fd_s = -1; 
+		
+		fd_s = -1; 
 		return 0;
 	}
 	else{
@@ -117,5 +107,103 @@ int closeConnection(const char *sockname){
 		return -1;
 	}
 }
+
+int openFile(const char *pathname, int flags){
+	
+	int len;
+	char *msg;
+	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	
+	if(fd_s != -1){
+		len = strlen(pathname);
+		msg = malloc(MSG_SIZE*sizeof(char));
+		strncpy(msg, "openfc", 7); //vedi se devi contare il terminatore e se dovevi fare una memset prima
+		strncat(msg, pathname, len); //guarda se strncat funziona così
+		write(fd_s, msg, len+7);
+		
+		read(fd_s, msg, MSG_SIZE);
+		if(strcmp(msg, "Ok") != 0){
+			errno = -1;//come lo setto errno in questo caso???
+			fprintf(stderr, "Esito dal server: %s\n", msg);
+		    free(msg);
+			return -1;
+		}
+	}
+	else{
+		errno = ENOTCONN;
+		perror("Connessione chiusa");
+		return -1;
+	}
+	
+	return 0;
+		
+}
+
+int closeFile(const char *pathname){ 
+
+    int len;
+	char *msg;
+	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	
+	if(fd_s != -1){
+		len = strlen(pathname);
+		msg = malloc(MSG_SIZE*sizeof(char));
+		strncpy(msg, "closef", 7); //vedi se devi contare il terminatore e se dovevi fare una memset prima
+		strncat(msg, pathname, len); //guarda se strncat funziona così
+		write(fd_s, msg, len+7);
+		
+		read(fd_s, msg, MSG_SIZE);
+		if(strcmp(msg, "Ok") != 0){
+			errno = -1; //come lo setto errno in questo caso???
+			fprintf(stderr, "Esito dal server: %s\n", msg);
+		    free(msg);
+			return -1;
+		}
+	}
+	else{
+		errno = ENOTCONN;
+		perror("Connessione chiusa");
+		return -1;
+	}
+
+return 0; 
+}
+
+int readFile(const char *pathname, void **buf, size_t *size) {
+	
+	int len;
+	char *msg;
+	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	
+	if(fd_s != -1){ //controllo se sono connesso 
+		len = strlen(pathname);
+		msg = malloc(MSG_SIZE*sizeof(char));
+		strncpy(msg, "readf", 6); //vedi se devi contare il terminatore e se dovevi fare una memset prima
+		strncat(msg, pathname, len); //guarda se strncat funziona così
+		write(fd_s, msg, len+6);
+		
+		read(fd_s, msg, MSG_SIZE);
+		
+		if(( *buf = (void *) strstr(msg, "Ok")) == NULL){
+			errno = -1; //come lo setto errno in questo caso???
+			fprintf(stderr, "Esito dal server: %s\n", msg);
+		    free(msg);
+			return -1;
+		}
+		else{
+			//fprintf(stderr,"1 buff = %s\n", (char *)*buf);
+			memmove(*buf, (char *) *buf + 2, strlen((char *) *buf));
+			//fprintf(stderr,"2 buff = %s\n", (char *)*buf);
+			*size = strlen(*buf); //va bene?	
+		}
+	}
+	else{
+		errno = ENOTCONN;
+		perror("Connessione chiusa");
+		return -1;
+	}
+	
+	
+	return 0; }
 	
 	

@@ -7,7 +7,7 @@
 #include "./api.h"
 
 #define DEBUG
-//#undef DEBUG
+#undef DEBUG
 
 /*Nella mia scelta di progetto conta l'ordine dei flag.
 Il flag f (socketname) deve essere specificato prima di richiedere i flag w,W,r,R,l,u,c 
@@ -43,11 +43,11 @@ int main(int argc, char *argv[]){
 		#ifdef DEBUG 
 			printf("t_requests = %d, found_r = %d, found_w = %d, found_p = %d\n", t_requests, found_r, found_w, found_p);
 			if( d_read != NULL)   
-				printf("d_read = %s ", d_read);
+				printf("d_read = %s, ", d_read);
 			if( D_removed != NULL)   
-				printf("D_removed = %s ", D_removed);
+				printf("D_removed = %s, ", D_removed);
 			if( files != NULL)   
-				printf("files = %s", files);
+				printf("files = %s, ", files);
 			if( socket_name != NULL)   
 				printf("socket_name = %s ", socket_name); 
 			printf("\n\n");
@@ -57,7 +57,7 @@ int main(int argc, char *argv[]){
 			
 			case 'h' :
 				
-				found_h = 1; //assicurati che così termini subito, guarda se anche in fondo la gestione va bene
+				found_h = 1; //assicurati che così termini subito, guarda se anche in fondo la gestione (cleanup) va bene
 				break;
 				
 			case 'f' : 
@@ -76,7 +76,7 @@ int main(int argc, char *argv[]){
 					}
 				}
 				else
-					printf("L'opzione f può essere richiesta una sola volta\n"); //stampo questo e ignoro gli f successivi al primo
+					printf("Attenzione: l'opzione f può essere richiesta una sola volta e necessita di un argomento\n"); //stampo questo e ignoro gli f successivi al primo
 	
 				break;
 				
@@ -105,11 +105,29 @@ int main(int argc, char *argv[]){
 			
 			    files = optarg;
 				found_r = 1;
-				
-				//if(d_read != NULL)
-				
-			
-					 
+				if(socket_name != NULL){
+					if(openFile(optarg, 0) == -1){
+						perror("Errore in openFile");
+						return -1;                               //attenzione che questi return -1 non saltino i cleanup necessari
+					}
+					char *buff = malloc(SZ_STRING*sizeof(char));
+					size_t size = (size_t) SZ_STRING;
+					if(readFile(optarg, (void *) &buff, &size) == -1){
+						perror("Errore in readFile");
+						return -1;
+					}
+					fprintf(stderr, "file letto: %s\n", buff);
+					if(d_read == NULL)
+						free(buff);
+					if (closeFile(optarg) == -1){
+						perror("Errore in closeFile");
+						return -1;
+					}
+				}
+				else{
+					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
+					return -1;
+				} 
 				
 				break;
 				
@@ -173,6 +191,7 @@ int main(int argc, char *argv[]){
 		perror("Errore in closeConnection");
 		exit(errno);
 	}
+	//gh
 	
 	return 0;
 	
