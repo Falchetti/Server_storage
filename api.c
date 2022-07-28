@@ -13,6 +13,11 @@
 #define DEBUG
 #undef DEBUG
 
+//****************
+// sono quasi tutte uguali queste funzioni, vedi se puoi accorparle con una funz generale
+//che viene chiamata opportunamente (magari col tipo di msg come parametro)
+//****************
+
 
 int fd_s = -1; //fd socket 
 char sck_name[UNIX_PATH_MAX]; //nome del socket
@@ -26,7 +31,8 @@ int isTimeout(struct timespec, struct timespec);
 //perchè -f lo posso chiamare solo una volta e solo lì invoco openConnection
 //inoltre la connessione è unica per ogni client 
 
-int openConnection(const char* sockname, int msec, const struct timespec abstime){
+//credo che probabilmete avrei dovuto farlo fare al server come tutto il resto 
+int openConnection(const char* sockname, int msec, const struct timespec abstime){ 
 	errno = 0;
 	int i = 0;
 	
@@ -117,8 +123,8 @@ int openFile(const char *pathname, int flags){
 	if(fd_s != -1){
 		len = strlen(pathname);
 		msg = malloc(MSG_SIZE*sizeof(char));
-		strncpy(msg, "openfc", 7); //vedi se devi contare il terminatore e se dovevi fare una memset prima
-		strncat(msg, pathname, len); //guarda se strncat funziona così
+		strncpy(msg, "openfc", 7); //vedi se dovevi fare una memset prima
+		strncat(msg, pathname, len+1); //guarda se strncat funziona così
 		write(fd_s, msg, len+7);
 		
 		read(fd_s, msg, MSG_SIZE);
@@ -148,14 +154,14 @@ int closeFile(const char *pathname){
 	if(fd_s != -1){
 		len = strlen(pathname);
 		msg = malloc(MSG_SIZE*sizeof(char));
-		strncpy(msg, "closef", 7); //vedi se devi contare il terminatore e se dovevi fare una memset prima
-		strncat(msg, pathname, len); //guarda se strncat funziona così
+		strncpy(msg, "closef", 7); //vedi se dovevi fare una memset prima
+		strncat(msg, pathname, len+1); //credo che il controllo di dimensione lo devi fare su msg, NON su pathname
 		write(fd_s, msg, len+7);
 		
 		read(fd_s, msg, MSG_SIZE);
 		if(strcmp(msg, "Ok") != 0){
 			errno = -1; //come lo setto errno in questo caso???
-			fprintf(stderr, "Esito dal server: %s\n", msg);
+			fprintf(stderr, "Err in chiusura file, msg server: %s\n", msg);
 		    free(msg);
 			return -1;
 		}
@@ -179,20 +185,20 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 		len = strlen(pathname);
 		msg = malloc(MSG_SIZE*sizeof(char));
 		strncpy(msg, "readf", 6); //vedi se devi contare il terminatore e se dovevi fare una memset prima
-		strncat(msg, pathname, len); //guarda se strncat funziona così
+		strncat(msg, pathname, len+1); //guarda se strncat funziona così
 		write(fd_s, msg, len+6);
 		
 		read(fd_s, msg, MSG_SIZE);
 		
 		if(( *buf = (void *) strstr(msg, "Ok")) == NULL){
 			errno = -1; //come lo setto errno in questo caso???
-			fprintf(stderr, "Esito dal server: %s\n", msg);
+			fprintf(stderr, "buff di lettura NULL, msg del server: %s\n", msg);
 		    free(msg);
 			return -1;
 		}
 		else{
 			//fprintf(stderr,"1 buff = %s\n", (char *)*buf);
-			memmove(*buf, (char *) *buf + 2, strlen((char *) *buf));
+			memmove(*buf, (char *) *buf + 2, strlen((char *) *buf)); //perchè qui mmve e in altri casi direttamente *buf +2?
 			//fprintf(stderr,"2 buff = %s\n", (char *)*buf);
 			*size = strlen(*buf); //va bene?	
 		}
@@ -205,5 +211,65 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 	
 	
 	return 0; }
+	
+int lockFile(const char *pathname){
+	int len;
+	char *msg;
+	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	
+	if(fd_s != -1){
+		len = strlen(pathname);
+		msg = malloc(MSG_SIZE*sizeof(char));
+		strncpy(msg, "lckf", 6); //vedi se dovevi fare una memset prima
+		strncat(msg, pathname, len+1); //guarda se strncat funziona così
+		write(fd_s, msg, len+6);
+		
+		read(fd_s, msg, MSG_SIZE);
+		if(strcmp(msg, "Ok") != 0){
+			errno = -1;//come lo setto errno in questo caso???
+			fprintf(stderr, "Esito dal server: %s\n", msg);
+		    free(msg);
+			return -1;
+		}
+	}
+	else{
+		errno = ENOTCONN;
+		perror("Connessione chiusa");
+		return -1;
+	}
+	
+	return 0;
+}
+
+int unlockFile(const char *pathname){
+	int len;
+	char *msg;
+	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	
+	if(fd_s != -1){
+		len = strlen(pathname);
+		msg = malloc(MSG_SIZE*sizeof(char));
+		strncpy(msg, "unlockf", 8); //vedi se dovevi fare una memset prima
+		strncat(msg, pathname, len+1); //guarda se strncat funziona così
+		write(fd_s, msg, len+8);
+		
+		read(fd_s, msg, MSG_SIZE);
+		if(strcmp(msg, "Ok") != 0){
+			errno = -1;//come lo setto errno in questo caso???
+			fprintf(stderr, "Esito dal server: %s\n", msg);
+		    free(msg);
+			return -1;
+		}
+	}
+	else{
+		errno = ENOTCONN;
+		perror("Connessione chiusa");
+		return -1;
+	}
+	
+	return 0;
+}
+		
+		
 	
 	

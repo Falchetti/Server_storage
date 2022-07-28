@@ -106,24 +106,39 @@ int main(int argc, char *argv[]){
 			    files = optarg;
 				found_r = 1;
 				if(socket_name != NULL){
-					if(openFile(optarg, 0) == -1){
-						perror("Errore in openFile");
-						return -1;                               //attenzione che questi return -1 non saltino i cleanup necessari
-					}
-					char *buff = malloc(SZ_STRING*sizeof(char));
-					size_t size = (size_t) SZ_STRING;
-					if(readFile(optarg, (void *) &buff, &size) == -1){
-						perror("Errore in readFile");
-						return -1;
-					}
-					fprintf(stderr, "file letto: %s\n", buff);
-					if(d_read == NULL)
-						free(buff);
-					if (closeFile(optarg) == -1){
-						perror("Errore in closeFile");
-						return -1;
+					char *tmpstr;
+					char *token = strtok_r(optarg, ",", &tmpstr);
+					while (token) {
+						if(openFile(token, 0) == -1){
+							perror("Errore in openFile");
+							return -1;                               //attenzione che questi return -1 non saltino i cleanup necessari
+						}
+						char *buff = malloc(SZ_STRING*sizeof(char));
+						size_t size = (size_t) SZ_STRING;
+						if(readFile(token, (void *) &buff, &size) == -1){
+							perror("Errore in readFile");
+							return -1;
+						}
+						fprintf(stderr, "file letto: %s\n", buff);
+						if(d_read == NULL)
+							free(buff);
+						if (closeFile(token) == -1){
+							perror("Errore in closeFile");
+							return -1;
+						}
+						/*assicurati di non poter fare una read se il file
+						non è aperto! 
+						if(readFile(token, (void *) &buff, &size) == -1){
+							perror("Errore in readFile");
+							return -1;
+						}
+						fprintf(stderr, "file letto: %s\n", buff); //NO, NON DOVREBBE FUNZIONARE!
+				        */
+						token = strtok_r(NULL, " ", &tmpstr);
+						
 					}
 				}
+				
 				else{
 					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
 					return -1;
@@ -148,11 +163,61 @@ int main(int argc, char *argv[]){
 				
 				break;
 				
-			case 'l' :
+			case 'l' :  //controlla bene come funzionano -l e -u (devo aprire il file?)
+			    if(socket_name != NULL){
+					char *tmpstr;
+					char *token = strtok_r(optarg, ",", &tmpstr);
+					while (token) {
+						/*if(openFile(token, 0) == -1){ //posso aprire un file più volte?? Serve un controllo?
+							perror("Errore in openFile");
+							return -1;                              
+						}*/
+						if(lockFile(token) == -1){
+							perror("Errore in lockFile");
+							return -1;
+						}
+						/*if (closeFile(token) == -1){
+							perror("Errore in closeFile");
+							return -1;
+						}*/
+						token = strtok_r(NULL, " ", &tmpstr);
+						
+					}
+				}
+				
+				else{ 
+					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
+					return -1;
+				} 
 				
 				break;
 				
-			case 'u' :
+			case 'u' : //controlla bene come funzionano -l e -u (devo aprire il file?)
+			if(socket_name != NULL){
+					char *tmpstr;
+					char *token = strtok_r(optarg, ",", &tmpstr);
+					while (token) {
+						/*if(openFile(token, 0) == -1){ //posso aprire un file più volte?? Serve un controllo?
+							perror("Errore in openFile");
+							return -1;                             
+						}*/
+						if(unlockFile(token) == -1){
+							perror("Errore in unlockFile");
+							return -1;
+						}
+						/*if (closeFile(token) == -1){
+							perror("Errore in closeFile");
+							return -1;
+						}*/
+						token = strtok_r(NULL, " ", &tmpstr);
+						
+					}
+				}
+				
+				else{
+					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
+					return -1;
+				} 
 				
 				break;
 			
@@ -191,7 +256,6 @@ int main(int argc, char *argv[]){
 		perror("Errore in closeConnection");
 		exit(errno);
 	}
-	//gh
 	
 	return 0;
 	

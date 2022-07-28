@@ -37,6 +37,24 @@
  *
  * @returns the hash index
  */
+ 
+//**************************************************//
+//*******************MODIFICHE**********************// 
+//**************************************************//
+
+ #define SIZE_CNT 100
+ 
+ typedef struct file_info{ 
+	int lock_owner;
+	//open_list *open_owners; (prima semplificazione, da scambiare poi con quella sotto)
+	int open_owner;
+	int lst_op; //controllo per la writeFile
+	char *cnt;
+} file_info;
+
+//**************************************************//
+//**************************************************// 
+
 unsigned int
 hash_pjw(void* key)
 {
@@ -130,6 +148,7 @@ icl_hash_find(icl_hash_t *ht, void* key)
  * @returns pointer to the new item.  Returns NULL on error.
  */
 
+
 icl_entry_t *
 icl_hash_insert(icl_hash_t *ht, void* key, void *data)
 {
@@ -147,10 +166,30 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
     /* if key was not found */
     curr = (icl_entry_t*)malloc(sizeof(icl_entry_t));
     if(!curr) return NULL;
-    
+   
+   
+   //**************************************************//
+   //*******************MODIFICHE**********************//
+	//**************************************************//
+   
 	curr->key = malloc((strlen(key)+1)*sizeof(char)); //modificato
-    strcpy(curr->key, key); //modificato
-    curr->data = data;
+    strcpy(curr->key, key); //modificato, forse potrei usare strdup 
+    
+	//curr->data = ((file_info)curr->data)-> lock_owner 
+	
+	curr->data = malloc(sizeof(file_info));
+  
+	((file_info *)curr->data)->lock_owner = ((file_info *)data)->lock_owner;
+	((file_info *)curr->data)->open_owner = ((file_info *)data)->open_owner; //da modificare
+	((file_info *)curr->data)->lst_op = ((file_info *)data)->lst_op;
+	((file_info *)curr->data)->cnt = malloc(SIZE_CNT*sizeof(char));
+	strcpy(((file_info *)curr->data)->cnt, ((file_info *)data)->cnt);
+	
+	//curr->data = data;
+	
+	//**************************************************//
+	//**************************************************// 
+	
     curr->next = ht->buckets[hash_val]; /* add at start */
 
     ht->buckets[hash_val] = curr;

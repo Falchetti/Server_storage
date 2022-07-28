@@ -24,4 +24,4 @@ clean :
 
 #questo test probabilmente sarà sostituito con uno script 
 test : 
-	./client.o -f /home/giulia/Server_storage/mysock -r pippo -r pluto -f sock -r paperondepaperoni -r qui -r pippo -r quo -h & ./server.o
+	./client.o -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server.o
