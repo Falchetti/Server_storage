@@ -3,25 +3,44 @@ CC = gcc
 #qui da aggiungere c99 
 CFLAGS = -Wall -pedantic 
 
-TARGETS = server.o client.o clean test
+TARGETS = server client clean test
 
 #genera tutti gli eseguibili
 all	: $(TARGETS) 
 
-.PHONY : clean 
+.PHONY : clean, test, cleanall
 
-server.o : server.c icl_hash.c 
-	$(CC) $(CFLAGS)  $^ -o $@
-
-#controlla qui se mettere -c e come gestire i file.h 
-client.o : client.c api.c 
+server : server.o icl_hash.o 
 	$(CC) $(CFLAGS) $^ -o $@
 
-#phony target
-clean :	
-	@echo "Rimuovo il sock file"
-	-rm mysock
+#così se modifico solo icl_hash questo modulo oggetto non viene ricreato 
+#MA questo sarebbe vero solo se non cancellassi con clean i moduli oggetto 
+server.o : server.c icl_hash.h 
+	$(CC) $(CFLAGS) -c $< -o $@
 
+client : client.o api.o
+	$(CC) $(CFLAGS) $^ -o $@
+	
+client.o : client.c api.h
+	$(CC) $(CFLAGS) -c $< -o $@
+	
+icl_hash.o : icl_hash.c icl_hash.h 
+	$(CC) $(CFLAGS) -c $< -o $@
+	
+api.o : api.c api.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+#phony target
+#lo fa all'inizio invece che alla fine, vedi come risolvere 
+clean :	
+	-rm -f mysock  
+
+cleanall : 
+	-rm -f *.o *.~ 
+	
 #questo test probabilmente sarà sostituito con uno script 
-test : 
-	./client.o -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server.o
+test2 : 
+	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
+	
+test :
+	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r ./prova -W ./prova -l pippo -u pippo -h & ./server
