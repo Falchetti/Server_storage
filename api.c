@@ -13,8 +13,12 @@
 #define MSG_SIZE  50 
 #define DEBUG
 #undef DEBUG
-#define O_LOCK 0
+#define O_OPEN 0
 #define O_CREATE 1
+#define O_LOCK 2
+#define O_CREATE_LOCK 3 
+
+//forse i define li devi mettere in api.h 
 
 //****************
 // sono quasi tutte uguali queste funzioni, vedi se puoi accorparle con una funz generale
@@ -130,22 +134,44 @@ int openFile(const char *pathname, int flags){ //per ora senza OR, ci dovrà ess
 	
 		len = strlen(pathname);
 		msg = malloc(MSG_SIZE*sizeof(char));
-		if (flags == O_CREATE){
-			strncpy(msg, "openfc", 7); //vedi se dovevi fare una memset prima
-			strncat(msg, pathname, len+1); //guarda se strncat funziona così
-			write(fd_s, msg, len+7);
+		switch(flags){
+			case O_OPEN: //attenzione a strstr 
+				strncpy(msg, "openfo", 7); //vedi se dovevi fare una memset prima
+				strncat(msg, pathname, len+1); //guarda se strncat funziona così
+				write(fd_s, msg, len+7);
+				break;
+			case O_CREATE:
+				strncpy(msg, "openfc", 7); //vedi se dovevi fare una memset prima
+				strncat(msg, pathname, len+1); //guarda se strncat funziona così
+				write(fd_s, msg, len+7);
+				break;
+			case O_LOCK:
+				strncpy(msg, "openfl", 7); //vedi se dovevi fare una memset prima
+				strncat(msg, pathname, len+1); //guarda se strncat funziona così
+				write(fd_s, msg, len+7);
+				break;
+			case O_CREATE_LOCK:
+				strncpy(msg, "openf_cl", 9); //vedi se dovevi fare una memset prima
+				strncat(msg, pathname, len+1); //guarda se strncat funziona così
+				write(fd_s, msg, len+9); //
+				break;
+			default: 
+				fprintf(stderr, "flag errato\n");
+				errno = EINVAL;
+				free(msg);
+				return -1;
 		}
-		else if(flags == O_LOCK){
-			strncpy(msg, "openfl", 7); //vedi se dovevi fare una memset prima
-			strncat(msg, pathname, len+1); //guarda se strncat funziona così
-			write(fd_s, msg, len+7);
-		}
+		
 			
-		read(fd_s, msg, MSG_SIZE);
+		read(fd_s, msg, MSG_SIZE); //
 		if(strcmp(msg, "Ok") != 0){
-			errno = -1;//come lo setto errno in questo caso???
-			fprintf(stderr, "Esito dal server: %s\n", msg);
-		    free(msg);
+			if(strcmp(msg, "Err:fileNonEsistente") == 0)
+				errno = ENOENT;
+			else{
+				errno = -1;//come lo setto errno in questo caso???
+			    fprintf(stderr, "Esito dal server: %s\n", msg);
+			}
+			free(msg);
 			return -1;
 		}
 	}
@@ -154,18 +180,20 @@ int openFile(const char *pathname, int flags){ //per ora senza OR, ci dovrà ess
 		perror("Connessione chiusa");
 		return -1;
 	}
+	free(msg);
 	
 	return 0;
 		
 }
 
-int closeFile(const char *pathname){ 
+int closeFile(const char *pathname){ //rilascia le lock 
 
     int len;
 	char *msg;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
 	
 	if(fd_s != -1){
+		
 		len = strlen(pathname);
 		msg = malloc(MSG_SIZE*sizeof(char));
 		strncpy(msg, "closef", 7); //vedi se dovevi fare una memset prima
@@ -224,7 +252,8 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 	}
 	
 	
-	return 0; }
+	return 0; 
+}
 	
 int lockFile(const char *pathname){
 	int len;
@@ -287,15 +316,70 @@ int unlockFile(const char *pathname){
 int writeFile(const char *pathname, const char* dirname) {
 	
 	int len;
+	char *msg, *aux; //vedi se devi allocare spazio per aux  
+	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	FILE *fp;
+	
+	if(fd_s != -1){ //controllo se sono connesso 
+	
+		len = strlen(pathname);
+		msg = malloc(MSG_SIZE*sizeof(char));
+		if((fp = fopen(pathname, "r")) == NULL){
+			perror("errore nella fopen"); //devo controllare se va a buon fine SI
+            free(msg);
+            return -1;
+        }			
+		aux = malloc(MSG_SIZE*sizeof(char));
+   
+		if (fscanf(fp, "%s", aux) == EOF && errno != 0){//va bene questo controllo? va bene come ho aggiornato il file?
+			fprintf(stderr, "fscanf fallita\n");
+			fclose(fp);
+			return -1;
+		}
+    	
+		fclose(fp);
+	
+		
+		strncpy(msg, "writef;", 8); //vedi se devi contare il terminatore e se dovevi fare una memset prima
+		strncat(msg, pathname, len+1); //guarda se strncat funziona così
+		strncat(msg, ";", 2);
+		strncat(msg, aux, strlen(aux)+1); //guarda se strncat funziona così
+	
+		write(fd_s, msg, strlen(aux)+len+8);
+			free(aux);
+		
+		read(fd_s, msg, MSG_SIZE);
+		
+		if((void *) strstr(msg, "Ok") == NULL){
+			errno = -1; //come lo setto errno in questo caso???
+			fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
+		    free(msg);
+			return -1;
+		}
+	}
+	else{
+		errno = ENOTCONN;
+		perror("Connessione chiusa");
+		return -1;
+	}
+	
+	return 0; 
+}
+
+int appendToFile(const char *pathname, void *buf, size_t size, const char* dirname) {
+	
+	int len;
 	char *msg;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
 	
 	if(fd_s != -1){ //controllo se sono connesso 
 		len = strlen(pathname);
 		msg = malloc(MSG_SIZE*sizeof(char));
-		strncpy(msg, "writef", 7); //vedi se devi contare il terminatore e se dovevi fare una memset prima
-		strncat(msg, pathname, len+1); //guarda se strncat funziona così
-		write(fd_s, msg, len+6);
+		strncpy(msg, "appendtof;", 11); //vedi se devi contare il terminatore e se dovevi fare una memset prima
+	    strncat(msg, pathname, len+1); //guarda se strncat funziona così
+    	strncat(msg, ";", 2);
+		strncat(msg, buf, size); //guarda se strncat funziona così
+		write(fd_s, msg, len+size+11);
 		
 		read(fd_s, msg, MSG_SIZE);
 		

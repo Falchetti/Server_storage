@@ -42,12 +42,18 @@
 //*******************MODIFICHE**********************// 
 //**************************************************//
 
- #define SIZE_CNT 100
+ #define SIZE_CNT 100 //rendi la taglia del contenuto coerente con il resto del codice
  
- typedef struct file_info{ 
+ 
+
+typedef struct open_node{
+    int fd;
+    struct open_node *next;
+} open_node;
+
+typedef struct file_info{ 
 	int lock_owner;
-	//open_list *open_owners; (prima semplificazione, da scambiare poi con quella sotto)
-	int open_owner;
+	open_node *open_owners; 
 	int lst_op; //controllo per la writeFile
 	char *cnt;
 } file_info;
@@ -180,10 +186,17 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
 	curr->data = malloc(sizeof(file_info));
   
 	((file_info *)curr->data)->lock_owner = ((file_info *)data)->lock_owner;
-	((file_info *)curr->data)->open_owner = ((file_info *)data)->open_owner; //da modificare
+	
+	((file_info *)curr->data)->open_owners = malloc(sizeof(open_node));
+	((file_info *)curr->data)->open_owners->fd = ((file_info *)data)->open_owners->fd; 
+	((file_info *)curr->data)->open_owners->next = ((file_info *)data)->open_owners->next;
 	((file_info *)curr->data)->lst_op = ((file_info *)data)->lst_op;
-	((file_info *)curr->data)->cnt = malloc(SIZE_CNT*sizeof(char));
-	strcpy(((file_info *)curr->data)->cnt, ((file_info *)data)->cnt);
+	if(((file_info *)data)->cnt != NULL){
+		((file_info *)curr->data)->cnt = malloc(SIZE_CNT*sizeof(char));
+		strcpy(((file_info *)curr->data)->cnt, ((file_info *)data)->cnt);
+	}
+	else 
+		((file_info *)curr->data)->cnt = NULL;
 	
 	//curr->data = data;
 	

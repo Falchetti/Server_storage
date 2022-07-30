@@ -21,9 +21,12 @@ idem per il flag t, solo le richieste a lui successive avranno quello specifico 
 #define SZ_STRING 1000  //rendi coerente questo se serve con api e server, dovrebbe essere la taglia del contenuto di un file, che deve passare per il canale di comunicazione, quindi < msg_size + taglia comandi
 #define MSEC_TENT 1000  //un tentativo al secondo nella openConnection
 #define SEC_TIMEOUT 10 //secondi prima del timeout nella openConnection
-#define O_LOCK 0
+#define O_OPEN 0
 #define O_CREATE 1
+#define O_LOCK 2
+#define O_CREATE_LOCK 3 
 
+//QUANDO CHIUDO IL CLIENT (vari return -1) ricordati di fare pulizia, di disconnettere la comunicazione (e i file aperti??)
 
 //int isNumber(void *);
 
@@ -41,6 +44,7 @@ int main(int argc, char *argv[]){
 	int found_p = 0;
 	char *tmpstr, *token, *buff; //li devo inizializzare a NULL?? (guarda strtok)
 	size_t size;
+	FILE *fp;
 
 	
 	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:p")) != -1) && !found_h ){
@@ -104,12 +108,35 @@ int main(int argc, char *argv[]){
 					while (token) {
 						
 						if(openFile(token, O_LOCK) == -1){ //per scrivere apro il file con la lock 
-							perror("Errore in openFile");
-							return -1;                      //attenzione che questi return -1 non saltino i cleanup necessari
+							if(errno == ENOENT){
+								if(openFile(token, O_CREATE_LOCK) == -1){
+									perror("Errore in openFile");
+							        return -1;
+								}
+							
+								if(writeFile(token, NULL) == -1){ //probabilmente con questo flag dovrei usare l'appendToFile non la writeFile (per via delle specifiche della openFile)
+									perror("Errore in writeFile");
+									return -1;
+								}
+									
+							}
+							else {
+								perror("Errore in openFile");
+							    return -1;                      //attenzione che questi return -1 non saltino i cleanup necessari
+						    }
 						}
-						if(writeFile(token, NULL) == -1){ //probabilmente con questo flag dovrei usare l'appendToFile non la writeFile (per via delle specifiche della openFile)
-							perror("Errore in writeFile");
-							return -1;
+						else {
+							buff = malloc(SZ_STRING*sizeof(char));
+							fp = fopen(token, "r");
+							errno = 0;
+							if (fscanf(fp, "%s", buff) == EOF && errno != 0)//va bene questo controllo? va bene come ho aggiornato il file?
+								perror("fscanf fallita\n");
+			
+							fclose(fp);
+							if(appendToFile(token, buff, strlen(buff), NULL) == -1){ //probabilmente con questo flag dovrei usare l'appendToFile non la writeFile (per via delle specifiche della openFile)
+								perror("Errore in writeFile");
+								return -1;
+							}
 						}
 						if (closeFile(token) == -1){
 							perror("Errore in closeFile");
@@ -144,7 +171,7 @@ int main(int argc, char *argv[]){
 				
 				break;
 				
-			case 'r' : //CON QUALE FLAG APRIRE IL FILE, lock o create?
+			case 'r' : //CON QUALE FLAG APRIRE IL FILE, lock o create? probabilmente o_lock 
 			
 			    //files = optarg;
 				found_r = 1;
@@ -153,21 +180,18 @@ int main(int argc, char *argv[]){
 					token = strtok_r(optarg, ",", &tmpstr);
 					
 					while (token) {
-						if(openFile(token, O_CREATE) == -1){// va bene O_CREATE?
+						if(openFile(token, O_LOCK) == -1){
 							perror("Errore in openFile");
 							return -1;                               //attenzione che questi return -1 non saltino i cleanup necessari
 						}
-						/*if(openFile(token, O_LOCK) == -1){
-							perror("Errore in openFile");
-							return -1;                               //attenzione che questi return -1 non saltino i cleanup necessari
-						}*/
+		
 						buff = malloc(SZ_STRING*sizeof(char));
 						size = (size_t) SZ_STRING;
 						
 						if(readFile(token, (void *) &buff, &size) == -1){
 							perror("Errore in readFile");
 							return -1;
-						}
+						} 
 						fprintf(stderr, "file letto: %s\n", buff);
 						if(d_read == NULL)
 							free(buff); //Altrimenti devo risolvere -d e poi fare la free!!!!
@@ -217,7 +241,7 @@ int main(int argc, char *argv[]){
 			case 'l' :  //Devo aprire il file per lare la lock?. Ha sempre a che fare con il flag O_LOCK nel file?
 			    if(socket_name != NULL){
 					token = strtok_r(optarg, ",", &tmpstr);
-					while (token) {
+					while (token) { //ho scelto che per fare la lock non devo aprire il file 
 						/*if(openFile(token, 0) == -1){ 
 							perror("Errore in openFile");
 							return -1;                              
@@ -246,7 +270,7 @@ int main(int argc, char *argv[]){
 			if(socket_name != NULL){
 					
 					token = strtok_r(optarg, ",", &tmpstr);
-					while (token) {
+					while (token) { //ho scelto che per fare la lock non devo aprire il file 
 						/*if(openFile(token, 0) == -1){ 
 							perror("Errore in openFile");
 							return -1;                             
