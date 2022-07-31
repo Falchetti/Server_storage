@@ -104,7 +104,7 @@ int main(int argc, char *argv[]){
 				
 				if(socket_name != NULL){ //mi assicuro la connessione sia aperta 
 					 
-					token = strtok_r(optarg, ",", &tmpstr); //rientrante va bene?
+					token = strtok_r(optarg, ",", &tmpstr); 
 					while (token) {
 						
 						if(openFile(token, O_LOCK) == -1){ //per scrivere apro il file con la lock 
@@ -113,7 +113,7 @@ int main(int argc, char *argv[]){
 									perror("Errore in openFile");
 							        return -1;
 								}
-							
+								
 								if(writeFile(token, NULL) == -1){ //probabilmente con questo flag dovrei usare l'appendToFile non la writeFile (per via delle specifiche della openFile)
 									perror("Errore in writeFile");
 									return -1;
@@ -127,10 +127,21 @@ int main(int argc, char *argv[]){
 						}
 						else {
 							buff = malloc(SZ_STRING*sizeof(char));
-							fp = fopen(token, "r");
+							if((fp = fopen(token, "r")) == NULL){
+								perror("errore fopen");
+								return -1;
+							}
 							errno = 0;
-							if (fscanf(fp, "%s", buff) == EOF && errno != 0)//va bene questo controllo? va bene come ho aggiornato il file?
+							char *aux2 = buff;
+							while (!feof(fp)){
+								fgets(aux2, SZ_STRING, fp);;
+								fprintf(stderr, "hhhh\n"); //non mi mette gli spazi così 
+								aux2 = aux2 + strlen(aux2);
+							}
+							if(errno != 0){//va bene questo controllo? va bene come ho aggiornato il file?
 								perror("fscanf fallita\n");
+								return -1;
+							}
 			
 							fclose(fp);
 							if(appendToFile(token, buff, strlen(buff), NULL) == -1){ //probabilmente con questo flag dovrei usare l'appendToFile non la writeFile (per via delle specifiche della openFile)
@@ -188,12 +199,16 @@ int main(int argc, char *argv[]){
 						buff = malloc(SZ_STRING*sizeof(char));
 						size = (size_t) SZ_STRING;
 						
-						if(readFile(token, (void *) &buff, &size) == -1){
+						if(readFile(token,  (void *) &buff, &size) == -1){
 							perror("Errore in readFile");
 							return -1;
 						} 
-						fprintf(stderr, "file letto: %s\n", buff);
-						if(d_read == NULL)
+						if(buff[0] == '\0')
+							fprintf(stderr, "file letto: VUOTO\n");
+						else
+							fprintf(stderr, "FILE LETTO: %s\n", (char *) buff);
+					
+     					if(d_read == NULL)
 							free(buff); //Altrimenti devo risolvere -d e poi fare la free!!!!
 						if (closeFile(token) == -1){
 							perror("Errore in closeFile");

@@ -10,9 +10,13 @@
 #include "api.h" 
 
 #define UNIX_PATH_MAX 108 //lunghezza massima path
-#define MSG_SIZE  50 
+#define MSG_SIZE  130 //path + spazio comandi 
+#define MAX_SIZE 230 //path, comandi, contenuto file
+#define CNT_SIZE 100
+
 #define DEBUG
 #undef DEBUG
+
 #define O_OPEN 0
 #define O_CREATE 1
 #define O_LOCK 2
@@ -33,6 +37,39 @@ char sck_name[UNIX_PATH_MAX]; //nome del socket
 //potrei usare direttamente fd_s
 
 int isTimeout(struct timespec, struct timespec);
+
+int msg_sender(char *msg, int fd, char *cmd, const char *path, char *cnt){
+	
+	int num_w = 0;
+	
+	strcpy(msg, cmd); //so la taglia max dei cmd no buff overflow
+	strcat(msg, ";"); //come sopra
+	strncat(msg, path, MAX_SIZE - strlen(msg) -1); //strncat aggiunge sempre \0 in fondo
+	
+	if(cnt != NULL){
+		strncat(msg, ";", MAX_SIZE - strlen(msg) -1);
+		strncat(msg, cnt, MAX_SIZE - strlen(msg) -1);
+	}
+	strncat(msg, ";$", MAX_SIZE - strlen(msg) -1); //carattere finale 
+	
+	if((num_w = write(fd, msg, MSG_SIZE)) == -1){
+		perror("Write del socket");
+		return -1;
+	}
+		  
+	else {
+		while(num_w < strlen(msg) + 1){
+			msg = msg + MSG_SIZE;
+			if((num_w = write(fd, msg, MSG_SIZE)) == -1){
+				perror("Write del socket2");
+				return -1;
+			}
+		}
+	}
+	
+	
+	return 0;
+}
 
 
 //non devo controllare che la connessione sia stata già aperta
@@ -70,7 +107,10 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 	
 	#ifdef DEBUG
 		char *buf = malloc(6*sizeof(char));
-		read(fd_s, buf, 5);
+		if(read(fd_s, buf, 5) == -1){
+			perror("read socket lato client");
+			return -1; //ok?
+	    }
 		fprintf(stderr, "Contenuto canale di comunicazione: %s\n", buf);
 	    free(buf);
 	#endif
@@ -124,55 +164,123 @@ int closeConnection(const char *sockname){
 	return 0;
 }
 
+//ASSICURATI CON TUTTE QUESTE STAMPE CHE ERRNO NON SIA SOVRASCRITTO
+//FREE NON SETTA ERRNO, MA PERROR SI' MI SA 
+
 int openFile(const char *pathname, int flags){ //per ora senza OR, ci dovrà essere un controllo sui flags (se sono ammessi)
 	
-	int len;
-	char *msg;
+	int errore = 0;
+	char *msg, *cmd;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	//int len; 
 	
 	if(fd_s != -1){ //la connessione è aperta? IL SERVER CONTROLLA SE IL FILE E' GIA' APERTO
 	
-		len = strlen(pathname);
-		msg = malloc(MSG_SIZE*sizeof(char));
+		//len = strlen(pathname);
+		msg = malloc(MAX_SIZE*sizeof(char));
+		
 		switch(flags){
 			case O_OPEN: //attenzione a strstr 
-				strncpy(msg, "openfo", 7); //vedi se dovevi fare una memset prima
-				strncat(msg, pathname, len+1); //guarda se strncat funziona così
-				write(fd_s, msg, len+7);
+			    
+				cmd = "openfo";
+				
+				/*strncpy(msg, "openfo", 7); //vedi se dovevi fare una memset prima
+				strncat(msg, pathname, len+1); //guarda se strncat funziona così, no
+				write(fd_s, msg, len+7);*/
 				break;
 			case O_CREATE:
-				strncpy(msg, "openfc", 7); //vedi se dovevi fare una memset prima
+				
+				cmd = "openfc";
+				
+				/*strncpy(msg, "openfc", 7); //vedi se dovevi fare una memset prima
 				strncat(msg, pathname, len+1); //guarda se strncat funziona così
-				write(fd_s, msg, len+7);
+				write(fd_s, msg, len+7);*/
+				
 				break;
+				
 			case O_LOCK:
-				strncpy(msg, "openfl", 7); //vedi se dovevi fare una memset prima
+			
+				cmd = "openfl";
+				
+				/*strncpy(msg, "openfl", 7); //vedi se dovevi fare una memset prima
 				strncat(msg, pathname, len+1); //guarda se strncat funziona così
-				write(fd_s, msg, len+7);
+				write(fd_s, msg, len+7);*/
+				
 				break;
 			case O_CREATE_LOCK:
-				strncpy(msg, "openf_cl", 9); //vedi se dovevi fare una memset prima
+				
+				cmd = "openfcl";
+				
+				/*strncpy(msg, "openf_cl", 9); //vedi se dovevi fare una memset prima
 				strncat(msg, pathname, len+1); //guarda se strncat funziona così
-				write(fd_s, msg, len+9); //
+				write(fd_s, msg, len+9); */
+				
 				break;
 			default: 
+				
 				fprintf(stderr, "flag errato\n");
 				errno = EINVAL;
-				free(msg);
-				return -1;
+				errore = 1;
 		}
+		if(!errore && msg_sender(msg, fd_s, cmd, pathname, NULL) == -1){
+			fprintf(stderr, "Errore in invio messaggio al server\n");
+			errore = 1;
+		}		
 		
 			
-		read(fd_s, msg, MSG_SIZE); //
-		if(strcmp(msg, "Ok") != 0){
+		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
+			perror("read socket lato client");
+			errore = 1;
+	    }
+		
+		if(!errore && strcmp(msg, "Ok") != 0){
 			if(strcmp(msg, "Err:fileNonEsistente") == 0)
 				errno = ENOENT;
 			else{
+				fprintf(stderr, "Esito dal server: %s\n", msg);
 				errno = -1;//come lo setto errno in questo caso???
-			    fprintf(stderr, "Esito dal server: %s\n", msg);
 			}
-			free(msg);
-			return -1;
+			errore = 1;
+		}
+	}
+	else{
+		errno = ENOTCONN;
+		perror("Connessione chiusa");
+		return -1;
+	}
+
+    free(msg);
+	
+	if(errore)
+		return -1;
+	
+	return 0;
+		
+}
+
+int closeFile(const char *pathname){ //rilascia le lock 
+
+    int errore = 0;
+	char *msg ;
+	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	
+	if(fd_s != -1){
+		
+		msg = malloc(MAX_SIZE*sizeof(char));
+		
+		if(!errore && msg_sender(msg, fd_s, "closef", pathname, NULL) == -1){
+			fprintf(stderr, "Errore in invio messaggio al server\n");
+			errore = 1;
+		}
+	
+		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
+			perror("read socket lato client");
+			errore = 1; //ok?
+	    }
+		if(!errore && strcmp(msg, "Ok") != 0){
+			fprintf(stderr, "Err in chiusura file, msg server: %s\n", msg);
+		    errno = -1; //come lo setto errno in questo caso???
+			errore = 1;
 		}
 	}
 	else{
@@ -181,77 +289,57 @@ int openFile(const char *pathname, int flags){ //per ora senza OR, ci dovrà ess
 		return -1;
 	}
 	free(msg);
-	
-	return 0;
-		
-}
-
-int closeFile(const char *pathname){ //rilascia le lock 
-
-    int len;
-	char *msg;
-	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
-	
-	if(fd_s != -1){
-		
-		len = strlen(pathname);
-		msg = malloc(MSG_SIZE*sizeof(char));
-		strncpy(msg, "closef", 7); //vedi se dovevi fare una memset prima
-		strncat(msg, pathname, len+1); //credo che il controllo di dimensione lo devi fare su msg, NON su pathname
-		write(fd_s, msg, len+7);
-		
-		read(fd_s, msg, MSG_SIZE);
-		if(strcmp(msg, "Ok") != 0){
-			errno = -1; //come lo setto errno in questo caso???
-			fprintf(stderr, "Err in chiusura file, msg server: %s\n", msg);
-		    free(msg);
-			return -1;
-		}
-	}
-	else{
-		errno = ENOTCONN;
-		perror("Connessione chiusa");
+	if(errore)
 		return -1;
-	}
+	
 
 return 0; 
 }
 
 int readFile(const char *pathname, void **buf, size_t *size) {
 	
-	int len;
-	char *msg;
+	
+	int errore = 0;
+	char *msg ;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
 	
+	
 	if(fd_s != -1){ //controllo se sono connesso 
-		len = strlen(pathname);
-		msg = malloc(MSG_SIZE*sizeof(char));
-		strncpy(msg, "readf", 6); //vedi se devi contare il terminatore e se dovevi fare una memset prima
-		strncat(msg, pathname, len+1); //guarda se strncat funziona così
-		write(fd_s, msg, len+6);
+	
+		msg = malloc(MAX_SIZE*sizeof(char));
 		
-		read(fd_s, msg, MSG_SIZE);
-		
-		if(( *buf = (void *) strstr(msg, "Ok")) == NULL){
-			errno = -1; //come lo setto errno in questo caso???
-			fprintf(stderr, "buff di lettura NULL, msg del server: %s\n", msg);
-		    free(msg);
-			return -1;
+		if(!errore && msg_sender(msg, fd_s, "readf", pathname, NULL) == -1){
+			fprintf(stderr, "Errore in invio messaggio al server\n");
+			errore = 1;
 		}
-		else{
-			//fprintf(stderr,"1 buff = %s\n", (char *)*buf);
-			memmove(*buf, (char *) *buf + 2, strlen((char *) *buf)); //perchè qui mmve e in altri casi direttamente *buf +2?
-			//fprintf(stderr,"2 buff = %s\n", (char *)*buf);
+		
+		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
+			perror("read socket lato client");
+			errore = 1; 
+	    }
+		
+		if(!errore && strstr(msg, "Ok") == NULL){
+			fprintf(stderr, "buff di lettura NULL, msg del server: %s\n", msg);
+			errno = -1; //come lo setto errno in questo caso???
+		}
+		
+		if(!errore){
+			strcpy((char *) *buf, msg + 2); 
+			//memmove(*buf, (char *) *buf + 2, strlen((char *) *buf)); //perchè qui mmve e in altri casi direttamente *buf +2?
 			*size = strlen(*buf); //va bene?	
 		}
+		
 	}
 	else{
 		errno = ENOTCONN;
 		perror("Connessione chiusa");
 		return -1;
 	}
-	
-	
+	free(msg);
+
+	if(errore)
+		return -1;
+
 	return 0; 
 }
 	
@@ -267,7 +355,10 @@ int lockFile(const char *pathname){
 		strncat(msg, pathname, len+1); //guarda se strncat funziona così
 		write(fd_s, msg, len+6);
 		
-		read(fd_s, msg, MSG_SIZE);
+		if(read(fd_s, msg, MSG_SIZE) == -1){
+			perror("read socket lato client");
+			return -1; //ok?
+	    }
 		if(strcmp(msg, "Ok") != 0){
 			errno = -1;//come lo setto errno in questo caso???
 			fprintf(stderr, "Esito dal server: %s\n", msg);
@@ -296,7 +387,10 @@ int unlockFile(const char *pathname){
 		strncat(msg, pathname, len+1); //guarda se strncat funziona così
 		write(fd_s, msg, len+8);
 		
-		read(fd_s, msg, MSG_SIZE);
+		if(read(fd_s, msg, MSG_SIZE) == -1){
+			perror("read socket lato client");
+			return -1; //ok?
+	    }
 		if(strcmp(msg, "Ok") != 0){
 			errno = -1;//come lo setto errno in questo caso???
 			fprintf(stderr, "Esito dal server: %s\n", msg);
@@ -315,54 +409,68 @@ int unlockFile(const char *pathname){
 
 int writeFile(const char *pathname, const char* dirname) {
 	
-	int len;
-	char *msg, *aux; //vedi se devi allocare spazio per aux  
-	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	int errore = 0;
+	char *msg, *aux, *aux2; //vedi se devi allocare spazio per aux  
 	FILE *fp;
-	
+	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+		
 	if(fd_s != -1){ //controllo se sono connesso 
 	
-		len = strlen(pathname);
 		msg = malloc(MSG_SIZE*sizeof(char));
+		
 		if((fp = fopen(pathname, "r")) == NULL){
 			perror("errore nella fopen"); //devo controllare se va a buon fine SI
             free(msg);
             return -1;
         }			
 		aux = malloc(MSG_SIZE*sizeof(char));
+		errno = 0;
    
-		if (fscanf(fp, "%s", aux) == EOF && errno != 0){//va bene questo controllo? va bene come ho aggiornato il file?
-			fprintf(stderr, "fscanf fallita\n");
-			fclose(fp);
+        aux2 = aux;
+        while (!feof(fp)){
+			fgets(aux2, MSG_SIZE, fp);;
+			aux2 = aux2 + strlen(aux2);
+		}
+		
+		if(errno != 0){//va bene questo controllo? va bene come ho aggiornato il file?
+			perror("fscanf fallita\n");
 			return -1;
 		}
-    	
+	
 		fclose(fp);
-	
-		
-		strncpy(msg, "writef;", 8); //vedi se devi contare il terminatore e se dovevi fare una memset prima
-		strncat(msg, pathname, len+1); //guarda se strncat funziona così
-		strncat(msg, ";", 2);
-		strncat(msg, aux, strlen(aux)+1); //guarda se strncat funziona così
-	
-		write(fd_s, msg, strlen(aux)+len+8);
-			free(aux);
-		
-		read(fd_s, msg, MSG_SIZE);
-		
-		if((void *) strstr(msg, "Ok") == NULL){
-			errno = -1; //come lo setto errno in questo caso???
-			fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
-		    free(msg);
-			return -1;
+		if(!errore && msg_sender(msg, fd_s, "writef", pathname, aux) == -1){
+			fprintf(stderr, "Errore in invio messaggio al server\n");
+			errore = 1;
 		}
+	 
+		//read(fd_s, msg, MSG_SIZE);
+		//fprintf(stderr, "MESSAGGIO WRITE SERVER: %s, errore %d\n", msg, errore);
+		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
+			perror("read socket lato client");
+			errore = 1; //ok?
+	    }
+	
+		
+		if(!errore &&  strcmp(msg, "Ok") != 0){
+			fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
+		    errno = -1; //come lo setto errno in questo caso???
+			errore = 1;
+		}
+		
+		
+		
 	}
 	else{
 		errno = ENOTCONN;
 		perror("Connessione chiusa");
 		return -1;
 	}
+	free(msg);
 	
+	if(errore){
+		return -1;
+	}
+	free(aux);
 	return 0; 
 }
 
@@ -381,7 +489,10 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char* dirna
 		strncat(msg, buf, size); //guarda se strncat funziona così
 		write(fd_s, msg, len+size+11);
 		
-		read(fd_s, msg, MSG_SIZE);
+		if( read(fd_s, msg, MSG_SIZE) == -1){
+			perror("read socket lato client");
+			return -1; //ok?
+	    }
 		
 		if((void *) strstr(msg, "Ok") == NULL){
 			errno = -1; //come lo setto errno in questo caso???

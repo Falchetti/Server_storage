@@ -9,8 +9,12 @@
 
 #define DEBUG
 //#undef DEBUG
-#define UNIX_PATH_MAX 108
-#define MSG_SIZE  50
+
+#define UNIX_PATH_MAX 108 //lunghezza massima path
+#define MSG_SIZE  130 //path + spazio comandi 
+#define MAX_SIZE 230 //path, comandi, contenuto file
+#define CNT_SIZE 100
+
 #define SOCKNAME "/home/giulia/Server_storage/mysock" //in realtà lo leggo dal file di configurazione credo 
 #define NBUCKETS  256 // n. di buckets nella tabella hash, forse sempre legato alla config 
 #define MAX_REQ   20 //n. max di richieste in coda 
@@ -104,6 +108,252 @@ void print_list(open_node *list){
 		fprintf(stderr, "\n");
 	}
 }
+
+void print_deb(icl_hash_t *ht){
+	icl_entry_t *entry;
+	char *key, *value;
+	int k;
+	
+	if (ht) {
+		file_info *aux;
+		for (k = 0; k < ht->nbuckets; k++)  {
+			for (entry = ht->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
+				aux = icl_hash_find(ht, key);
+				fprintf(stderr, "k = %d, chiave: %s, lock_owner: %d, last_op: %d \n",k, key, aux->lock_owner, aux->lst_op);
+			
+				print_list(aux->open_owners);
+					
+				if(aux->cnt != NULL)
+					fprintf(stderr, "contenuto: %s\n", aux->cnt);
+				else
+					fprintf(stderr, "contenuto: NULL\n");	
+			}
+		}
+	}
+	else{
+		fprintf(stderr, "hash table vuota\n");
+	}
+}
+
+int openFC(icl_hash_t *ht, char *path, int fd){ //free(data)?
+	file_info *data;
+	if(icl_hash_find(ht, path) != NULL){ 
+		fprintf(stderr, "Impossibile ricreare file già esistente\n");
+		write(fd, "Err:fileEsistente", 18); 
+		return -1;
+	}
+	else{
+		data = init_file(-1, fd, 0, "0"); 
+
+		if(icl_hash_insert(ht, path, data) == NULL){
+			fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
+			write(fd, "Err:inserimento", 16);
+			return -1;
+		}
+		
+		write(fd, "Ok", 3);
+		
+		#ifdef DEBUG
+			fprintf(stderr,"---OPEN CREATE FILE\n");
+			print_deb(ht);
+		#endif 
+	}
+	return 0;
+}
+
+int openFL(icl_hash_t *ht, char *path, int fd){
+	//HO CIRCA COPIATO IL CODICE DEL SERVER SUL MESSAGGIO LCKF, POI IMPACCHETTA TUTTO IN DELLE FUNZIONI 		
+	file_info *tmp;
+	if((tmp = icl_hash_find(ht, path)) == NULL){ 
+		fprintf(stderr, "Impossibile fare lock su file non esistente\n");
+		write(fd, "Err:fileNonEsistente", 21); 
+		/*char * msg = malloc(MSG_SIZE*sizeof(char));
+		
+		read(fd, msg, 21);
+		fprintf("VEDIAMO: msg %s strlen %d\n", msg, strlen(msg));*/
+		//qui ci vuole un return -1?
+		return -1;
+	} 
+	else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro (per ora)
+		while((tmp->lock_owner != -1 && tmp->lock_owner != fd)){
+			sleep(1); //attesa attiva??
+		}
+		tmp->lock_owner = fd;
+		insert_head(&(tmp->open_owners), fd); //dovrei controllare val ritorno
+		
+		tmp->lst_op = 0;
+		write(fd, "Ok", 3);	
+		
+	}
+	
+	#ifdef DEBUG
+		fprintf(stderr,"---OPEN LOCKED FILE\n");
+		print_deb(ht);
+	#endif
+	return 0;
+}
+
+int openFO(icl_hash_t *ht, char *path, int fd){
+	file_info *tmp;
+	
+	if((tmp = icl_hash_find(ht, path)) == NULL){ 
+		fprintf(stderr, "Impossibile aprire un file non esistente\n");
+		write(fd, "Err:fileNonEsistente", 21);
+		return -1;
+	} 
+	else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro (per ora)
+		insert_head(&(tmp->open_owners), fd); //dovrei controllare val ritorno
+		tmp->lst_op = 0;
+		
+		write(fd, "Ok", 3);	
+	}
+	#ifdef DEBUG
+		fprintf(stderr,"---OPEN FILE \n");
+		print_deb(ht);
+	#endif
+	
+	return 0;
+	
+}
+
+int openFCL(icl_hash_t *ht, char *path, int fd){
+		file_info *data;
+		
+		if(icl_hash_find(ht, path) != NULL){ 
+			fprintf(stderr, "Impossibile ricreare un file già esistente\n");
+			write(fd, "Err:fileEsistente", 18); 
+			return -1;
+		} 
+		else{ 
+			data = init_file(fd, fd, 1, "0"); 
+		
+			if(icl_hash_insert(ht, path, data) == NULL){
+				fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
+				write(fd, "Err:inserimento", 16);
+				return -1;
+			}			
+			
+			write(fd, "Ok", 3);	
+		}
+		
+		#ifdef DEBUG
+			fprintf(stderr,"---OPEN CREATE LOCKED FILE\n");
+			print_deb(ht);
+		#endif
+		
+		return 0;
+	}
+	
+int closeF(icl_hash_t *ht, char *path, int fd){
+	file_info *tmp;
+	
+	if((tmp = icl_hash_find(ht, path)) == NULL){ 
+		fprintf(stderr, "Impossibile chiudere file non esistente\n");
+		write(fd, "Err:fileNonEsistente", 21); 
+		return -1;
+	}
+	else if(tmp->open_owners == NULL || tmp->open_owners->fd != fd){
+		fprintf(stderr, "Impossibile chiudere file che non si è prima aperto\n");
+		write(fd, "Err:fileNonAperto", 18); 
+		return -1;
+	}
+	else{
+		
+		remove_elm(&(tmp->open_owners), fd);
+						
+		if(tmp->lock_owner == fd)
+			tmp->lock_owner = -1;
+		tmp->lst_op = 0;
+
+		write(fd, "Ok", 3);
+	}
+	#ifdef DEBUG
+		fprintf(stderr,"---CLOSE FILE \n");
+		print_deb(ht);
+	#endif
+	
+	return 0;
+}
+
+int readF(icl_hash_t *ht, char *path, int fd){
+	file_info *tmp;	
+    char *msg = malloc(MSG_SIZE*sizeof(char));	
+	if((tmp = icl_hash_find(ht, path)) == NULL){ 
+		fprintf(stderr, "Impossibile leggere file non esistente\n");
+		write(fd, "Err:fileNonEsistente", 21); 
+		return -1;
+	}
+	else if(tmp->open_owners == NULL || tmp->open_owners->fd != fd){
+		fprintf(stderr, "Impossibile leggere file non aperto\n");
+		write(fd, "Err:fileNonAperto", 18); 
+		return -1;
+	}
+	else if(tmp->lock_owner != fd && tmp->lock_owner != -1 ){
+		fprintf(stderr, "Impossibile leggere file con lock attiva\n");
+		write(fd, "Err:fileLocked", 15); 
+		return -1;
+	}
+	else{
+		tmp->lst_op = 0;
+		strcpy(msg, "Ok"); //vedi se sovrascrive
+		if(tmp->cnt != NULL)
+			strcat(msg, tmp->cnt);
+		write(fd, msg, strlen(msg)+1); //ha senso il terzo parametro? 
+	}
+	
+	#ifdef DEBUG
+		fprintf(stderr,"---READ FILE \n");
+		print_deb(ht);
+	#endif
+	free(msg);
+	
+	return 0;
+			
+}
+
+int writeF(icl_hash_t *ht, char *path, char *cnt, int fd){
+	file_info *tmp;	
+	
+	if((tmp = icl_hash_find(ht, path)) == NULL){ 
+		fprintf(stderr, "Impossibile scrivere su file non esistente\n");
+		write(fd, "Err:fileNonEsistente", 21); 
+		return -1;
+	}
+	else if(tmp->open_owners == NULL || tmp->open_owners->fd != fd){
+		fprintf(stderr, "Impossibile scrivere su file non aperto\n");
+		write(fd, "Err:fileNonAperto", 18); 
+		return -1;
+	}
+	else if (tmp->lst_op == 0) { //forse dovrei usare l'update insert 
+		fprintf(stderr, "L'operazione precedente a writeFile deve essere openFile\n");
+		write(fd, "Err:lastOperation", 18); 
+		return -1;
+	}
+	else if(tmp->lock_owner != fd){ //questo me lo assicura l'if precedente in realtà 
+		fprintf(stderr, "Impossibile scrivere su file senza lock\n");
+		write(fd, "Err:fileSenzaLock", 18); 
+		return -1;
+	}
+	else{
+		if(cnt != NULL){
+			if(tmp->cnt == NULL)
+				tmp->cnt = malloc(MSG_SIZE*sizeof(char));
+			strcpy(tmp->cnt, cnt);
+		}
+		else
+			fprintf(stderr, "richiesta scrittura di file vuoto\n");
+	    write(fd, "Ok", 3);
+	}
+	
+	#ifdef DEBUG
+		fprintf(stderr,"---WRITE FILE \n");
+		print_deb(ht);
+	#endif
+		
+	
+	return 0;
+}
+	
 				
 
 int main(int argc, char *argv[]){
@@ -137,264 +387,86 @@ int main(int argc, char *argv[]){
 	
 	fd_c = accept(fd_skt, NULL, 0); //fai gestire errore, crea un nuovo socket per la comunicazione e ne restituisce il file descriptor
 
-	char *aux = malloc(MSG_SIZE*sizeof(char));
-	char *stringa;
-	
-	int k;
-	icl_entry_t *entry;
-	char *key, *value, *tmpstr;
-	file_info *tmp;
-	file_info *data;
-	
+	char *token, *token2;
+	char *tmpstr;
+
 	
     for(int i = 0; i < N ; i++){
 		msg = malloc(MSG_SIZE*sizeof(char)); //controlla la malloc 
 		
-		read(fd_c, msg, MSG_SIZE); //fai gestione errore 
-		fprintf(stderr, "\n*********Contenuto canale di comunicazione: %s*******\n\n", msg);
-		stringa = malloc(MSG_SIZE*sizeof(char)); //potrei usare direttamente msg 
+		if(read(fd_c, msg, MSG_SIZE) == -1){
+			perror("read socket lato server");
+			return -1; //ok?
+	    }
 		
-		if((stringa = strstr(msg, "openfc")) != NULL){ //creo file nello storage
-			strcpy(aux, stringa + 6);
-			if(icl_hash_find(hash_table, aux) != NULL){ 
-				fprintf(stderr, "Impossibile ricreare file già esistente\n");
-				write(fd_c, "Err:fileEsistente", 18); 
-				i = N;
-			}
-			else{
-				data = init_file(-1, fd_c, 0, "0"); //qui forse c'è 0 per lst_op, non ho capito 
-				
-				if(icl_hash_insert(hash_table, aux, data) == NULL){
-					fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
-					write(fd_c, "Err:inserimento", 16);
-					i = N;
-				}
-				else {	
-					write(fd_c, "Ok", 3); //sovrascrive? 
-					
-				    #ifdef DEBUG
-                    fprintf(stderr,"---INSERIMENTO INIZIALE openFile\n");
-						if (hash_table) {
-							file_info *aux;
-							for (k = 0; k < hash_table->nbuckets; k++)  {
-								for (entry = hash_table->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
-									aux = icl_hash_find(hash_table, key);
-									fprintf(stderr, "k = %d, chiave: %s, lock_owner: %d, last_op: %d \n",k, key, aux->lock_owner, aux->lst_op);
-								
-									print_list(aux->open_owners);
-										
-									if(aux->cnt != NULL)
-										fprintf(stderr, "contenuto: %s\n", aux->cnt);
-									else
-										fprintf(stderr, "contenuto: NULL\n");	
-								}
-							}
-						}
-					#endif	
-				}
-				free(data);
-				
-			}
-		}
-		else if((stringa = strstr(msg, "openfl")) != NULL){ //lock su file nello storage
-			strcpy(aux, stringa + 6);
-		//HO CIRCA COPIATO IL CODICE DEL SERVER SUL MESSAGGIO LCKF, POI IMPACCHETTA TUTTO IN DELLE FUNZIONI 		
-			if((tmp = icl_hash_find(hash_table, aux)) == NULL){ 
-				fprintf(stderr, "Impossibile fare lock su file non esistente\n");
-				write(fd_c, "Err:fileNonEsistente", 21); 
-			} 
-			else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro (per ora)
-			    while((tmp->lock_owner != -1 && tmp->lock_owner != fd_c)){
-					sleep(1); //attesa attiva??
-				}
-				tmp->lock_owner = fd_c;
-				insert_head(&(tmp->open_owners), fd_c); //dovrei controllare val ritorno
-				
-				tmp->lst_op = 0;
-				
-				write(fd_c, "Ok", 3);	
-				
-				#ifdef DEBUG
-                    fprintf(stderr,"---OPEN LOCK openFile\n");
-					if (hash_table) {
-						file_info *aux;
-						for (k = 0; k < hash_table->nbuckets; k++)  {
-							for (entry = hash_table->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
-								aux = icl_hash_find(hash_table, key);
-								fprintf(stderr, "k = %d, chiave: %s, lock_owner: %d, last_op: %d \n",k, key, aux->lock_owner, aux->lst_op);
-							
-								print_list(aux->open_owners);
-									
-								if(aux->cnt != NULL)
-									fprintf(stderr, "contenuto: %s\n", aux->cnt);
-								else
-								    fprintf(stderr, "contenuto: NULL\n");
-							}
-						}
-					}
-				
-				#endif	
-			}
-							
-		}
-		else if((stringa = strstr(msg, "openfo")) != NULL){ //apro file nello storage
-			strcpy(aux, stringa + 6);
-		//HO CIRCA COPIATO IL CODICE DEL SERVER SUL MESSAGGIO LCKF, POI IMPACCHETTA TUTTO IN DELLE FUNZIONI 		
-			if((tmp = icl_hash_find(hash_table, aux)) == NULL){ 
-				fprintf(stderr, "Impossibile aprire un file non esistente\n");
-				write(fd_c, "Err:fileNonEsistente", 21); 
-				i = N;
-			} 
-			else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro (per ora)
-				insert_head(&(tmp->open_owners), fd_c); //dovrei controllare val ritorno
-				tmp->lst_op = 0;
-				
-				write(fd_c, "Ok", 3);	
-				
-				 #ifdef DEBUG
-                    fprintf(stderr,"---OPEN openFile\n");
-						if (hash_table) {
-							file_info *aux;
-							for (k = 0; k < hash_table->nbuckets; k++)  {
-								for (entry = hash_table->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
-									aux = icl_hash_find(hash_table, key);
-									printf("k = %d, chiave: %s, lock_owner: %d, open_owners: %d, last_op: %d \n",k, key, aux->lock_owner, aux->open_owners->fd, aux->lst_op);
-									if(aux->cnt != NULL)
-										printf("contenuto: %s\n", aux->cnt);
-									else
-										fprintf(stderr, "contenuto: NULL\n");
-								}
-							}
-						}
-				#endif	
-			}
-							
-		}
-		else if((stringa = strstr(msg, "openf_cl")) != NULL){ //creo e faccio lock su file nello storage
-			strcpy(aux, stringa + 8);
-		//HO CIRCA COPIATO IL CODICE DEL SERVER SUL MESSAGGIO LCKF, POI IMPACCHETTA TUTTO IN DELLE FUNZIONI 		
-			if(icl_hash_find(hash_table, aux) != NULL){ 
-				fprintf(stderr, "Impossibile ricreare un file già esistente\n");
-				write(fd_c, "Err:fileEsistente", 18); 
-				i = N;
-			} 
-			else{ 
-				data = init_file(fd_c, fd_c, 1, "0"); 
+		fprintf(stderr, "\n*********Contenuto canale di comunicazione: %s*******\n\n", msg);
+		
+		//stringa = malloc(MSG_SIZE*sizeof(char)); //potrei usare direttamente msg 
+		
+		token = strtok_r(msg, ";", &tmpstr);
+		
+		if(token != NULL){
 			
-				if(icl_hash_insert(hash_table, aux, data) == NULL){
-					fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
-					write(fd_c, "Err:inserimento", 16);
+			if(strcmp(token, "openfc") == 0){
+				token = strtok_r(NULL, ";", &tmpstr);
+				if(openFC(hash_table, token, fd_c) == -1){
 					i = N;
 				}
-				
-				
-				write(fd_c, "Ok", 3);	
-				
-				#ifdef DEBUG
-				    fprintf(stderr,"---LOCK CREATE openFile\n");
-					if (hash_table) {
-						file_info *aux;
-						for (k = 0; k < hash_table->nbuckets; k++)  {
-							for (entry = hash_table->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
-								aux = icl_hash_find(hash_table, key);
-								fprintf(stderr, "k = %d, chiave: %s, lock_owner: %d, last_op: %d \n",k, key, aux->lock_owner, aux->lst_op);
-							
-								print_list(aux->open_owners);
-									
-								if(aux->cnt != NULL)
-									fprintf(stderr, "contenuto: %s\n", aux->cnt);
-							    else
-								    fprintf(stderr, "contenuto: NULL\n");
-							}
-						}
-					}
-				#endif		
 			}
-							
-		}
-		else if(strstr(msg, "disconnesso") != NULL){ //da chiudere i file e aggiornarli
-			close(fd_c); //non so se lo fa in automatico
-			i = N;
-		}
-		else if((stringa = strstr(msg, "closef")) != NULL){ //rilascio lock 
-		    aux = malloc(MSG_SIZE*(sizeof(char)));
-			strcpy(aux, stringa + 6);
-			fprintf(stderr,"---CHIUSURA FILE %s\n", aux);
-			if((tmp = icl_hash_find(hash_table, aux)) == NULL){ 
-				fprintf(stderr, "Impossibile chiudere file non esistente\n");
-				write(fd_c, "Err:fileNonEsistente", 21); 
+			else if(strcmp(token, "openfl") == 0){
+				token = strtok_r(NULL, ";", &tmpstr);
+				if(openFL(hash_table, token, fd_c) == -1){
+					//i = N;
+				}
+			}
+			else if(strcmp(token, "openfo") == 0){
+				token = strtok_r(NULL, ";", &tmpstr);
+				if(openFO(hash_table, token, fd_c) == -1){
+					i = N;
+				}
+			}
+			else if(strcmp(token, "openfcl") == 0){
+				token = strtok_r(NULL, ";", &tmpstr);
+				if(openFCL(hash_table, token, fd_c) == -1){
+					i = N;
+				}
+			}
+			else if(strcmp(token, "disconnesso") == 0){//da chiudere i file e aggiornarli
+				close(fd_c); //non so se lo fa in automatico
 				i = N;
 			}
-			else if(tmp->open_owners == NULL || tmp->open_owners->fd != fd_c){
-				fprintf(stderr, "Impossibile chiudere file che non si è prima aperto\n");
-				write(fd_c, "Err:fileNonAperto", 18); 
-				i = N;
+			else if(strcmp(token, "closef") == 0){
+				token = strtok_r(NULL, ";", &tmpstr);
+				if(closeF(hash_table, token, fd_c) == -1){
+					i = N;
+				}
+			}
+			else if(strcmp(token, "readf") == 0){
+				token = strtok_r(NULL, ";", &tmpstr);
+				if(readF(hash_table, token, fd_c) == -1){
+					i = N;
+				}
+			}
+			else if(strcmp(token, "writef") == 0){
+				token = strtok_r(NULL, ";", &tmpstr);
+				token2 = strtok_r(NULL, ";", &tmpstr);
+				if(strcmp(token2, "$") == 0)
+					token2 = NULL;
+					
+				if(writeF(hash_table, token, token2, fd_c) == -1){
+					i = N;
+				}
+						
 			}
 			else{
-				
-				remove_elm(&(tmp->open_owners), fd_c);
-								
-				if(tmp->lock_owner == fd_c)
-					tmp->lock_owner = -1;
-				tmp->lst_op = 0;
-
+				fprintf(stderr, "Opzione non ancora implementata\n");
 				write(fd_c, "Ok", 3);
 			}
-			free(aux);
 			
-			#ifdef DEBUG
-				fprintf(stderr,"---CLOSE openFile\n");
-				if (hash_table) {
-					file_info *aux;
-					for (k = 0; k < hash_table->nbuckets; k++)  {
-						for (entry = hash_table->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
-							aux = icl_hash_find(hash_table, key);
-							fprintf(stderr, "k = %d, chiave: %s, lock_owner: %d, last_op: %d \n",k, key, aux->lock_owner, aux->lst_op);
-						
-							print_list(aux->open_owners);
-								
-							if(aux->cnt != NULL)
-								fprintf(stderr, "contenuto: %s\n", aux->cnt);
-							else
-								fprintf(stderr, "contenuto: NULL\n");
-						}
-					}
-				}
-			#endif	
-			
+			//free(stringa);	
+			//free(msg); non ho capito chi fa la free di msg, mi sa la close, ma va bene?	
 		}
-		else if((stringa = strstr(msg, "readf")) != NULL){
-	        strcpy(aux, stringa + 5);
-			fprintf(stderr, "---READ FILE %s\n", aux);
-			if((tmp = icl_hash_find(hash_table, aux)) == NULL){ 
-				fprintf(stderr, "Impossibile leggere file non esistente\n");
-				write(fd_c, "Err:fileNonEsistente", 21); 
-				i = N;
-			}
-			else if(tmp->open_owners == NULL || tmp->open_owners->fd != fd_c){
-				fprintf(stderr, "Impossibile leggere file non aperto\n");
-				write(fd_c, "Err:fileNonAperto", 18); 
-				i = N;
-			}
-			else if(tmp->lock_owner != fd_c && tmp->lock_owner != -1 ){
-				fprintf(stderr, "Impossibile leggere file con lock attiva\n");
-				write(fd_c, "Err:fileLocked", 15); 
-				i = N;
-			}
-			else{
-				if(tmp == NULL) //va bene nessun contenuto?
-				    write(fd_c, "Ok", 3);
-				else{
-					tmp->lst_op = 0;
-					strcpy(msg, "Ok"); //vedi se sovrascrive
-					if(tmp->cnt != NULL)
-						strcat(msg, tmp->cnt);
-					write(fd_c, msg, strlen(msg)+1); //ha senso il terzo parametro? 
-				}
-					
-			}
-			
-		}
+		/*
 		else if((stringa = strstr(msg, "lckf")) != NULL){ //problema lock unlock in strstr da gestire meglio 
 	        strcpy(aux, stringa + 4);
 			fprintf(stderr, "---LOCK FILE %s\n", aux);
@@ -404,14 +476,8 @@ int main(int argc, char *argv[]){
 				write(fd_c, "Err:fileNonEsistente", 21); 
 				i = N;
 			}
-			//ho scelto di fare la lock anche su file non aperti
-			/*
-			else if(tmp->open_owners != fd_c){ 
-				fprintf(stderr, "Impossibile fare lock su file non aperto\n");
-				write(fd_c, "Err:fileNonAperto", 18); 
-				i = N;
-			}
-			//*/
+			
+
 			else{
 			    while((tmp->lock_owner != -1 && tmp->lock_owner != fd_c)){
 					sleep(1); //attesa attiva??
@@ -449,14 +515,7 @@ int main(int argc, char *argv[]){
 				write(fd_c, "Err:fileNonEsistente", 21); 
 				i = N;
 			}
-			//ho scelto di fare la unlock anche su file non aperti
-			/*
-			else if(tmp->open_owners != fd_c){ //scelto di fare unlock solo su file aperti, è ok? 
-				fprintf(stderr, "Impossibile fare unlock su file non aperto\n");
-				write(fd_c, "Err:fileNonAperto", 18); 
-				i = N;
-			}
-			//*/
+
 			else if(tmp->lock_owner != fd_c){
 				fprintf(stderr, "Impossibile fare unlock su file di cui non si ha la lock\n");
 				write(fd_c, "Err:Nolock", 21); 
@@ -491,62 +550,7 @@ int main(int argc, char *argv[]){
 			
 			
 		}
-		else if((stringa = strstr(msg, "writef")) != NULL){
-			aux = strtok_r(stringa, ";", &tmpstr);
-			aux = strtok_r(NULL, ";", &tmpstr);
-	    
-			fprintf(stderr, "---WRITE FILE %s\n", aux);
-			
-			if((tmp = icl_hash_find(hash_table, aux)) == NULL){ 
-				fprintf(stderr, "Impossibile scrivere su file non esistente\n");
-				write(fd_c, "Err:fileNonEsistente", 21); 
-				i = N;
-			}
-			else if(tmp->open_owners == NULL || tmp->open_owners->fd != fd_c){
-					fprintf(stderr, "Impossibile scrivere su file non aperto\n");
-					write(fd_c, "Err:fileNonAperto", 18); 
-					i = N;
-				}
-			else if (tmp->lst_op == 0) { //forse dovrei usare l'update insert 
-				    fprintf(stderr, "L'operazione precedente a writeFile deve essere openFile\n");
-					write(fd_c, "Err:lastOperation", 18); 
-					i = N;
-			    }
-			else if(tmp->lock_owner != fd_c){ //questo me lo assicura l'if precedente in realtà 
-					fprintf(stderr, "Impossibile scrivere su file senza lock\n");
-					write(fd_c, "Err:fileSenzaLock", 18); 
-					i = N;
-				}
-			else{
-				    aux = strtok_r(NULL, ";", &tmpstr);
-					if(aux != NULL){
-						if(tmp->cnt == NULL)
-							tmp->cnt = malloc(MSG_SIZE*sizeof(char));
-						strcpy(tmp->cnt, aux);
-					}
-					else
-						fprintf(stderr, "richiesta scrittura di file vuoto\n");
-					write(fd_c, "Ok", 3);	
-			}
-			#ifdef DEBUG
-				
-					if (hash_table) {
-						file_info *aux;
-						for (k = 0; k < hash_table->nbuckets; k++)  {
-							for (entry = hash_table->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
-								aux = icl_hash_find(hash_table, key);
-								fprintf(stderr, "k = %d, chiave: %s, lock_owner: %d, last_op: %d \n",k, key, aux->lock_owner, aux->lst_op);
-							
-								print_list(aux->open_owners);
-									
-								if(aux->cnt != NULL)
-									fprintf(stderr, "contenuto: %s\n", aux->cnt);
-							}
-						}
-					}
-				#endif	
-			
-		}
+		
 		else if((stringa = strstr(msg, "appendtof")) != NULL){
 	        aux = strtok_r(stringa, ";", &tmpstr);
 			aux = strtok_r(NULL, ";", &tmpstr);
@@ -581,35 +585,17 @@ int main(int argc, char *argv[]){
 				write(fd_c, "Ok", 3);			
 			}
 			
-		}
-		else{
-			fprintf(stderr, "Opzione non ancora implementata\n");
-			write(fd_c, "Ok", 3);
-		}
-		free(stringa);	
-		//free(msg); non ho capito chi fa la free di msg, mi sa la close, ma va bene?			
-	}
-
+		}	
+	
+*/
 		
-	#ifdef DEBUG
-		fprintf(stderr,"\n---HASHTABLE\n");
-			if (hash_table) {
-				file_info *aux;
-				for (k = 0; k < hash_table->nbuckets; k++)  {
-					for (entry = hash_table->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
-						aux = icl_hash_find(hash_table, key);
-						fprintf(stderr, "k = %d, chiave: %s, lock_owner: %d, last_op: %d \n",k, key, aux->lock_owner, aux->lst_op);
-					
-						print_list(aux->open_owners);
-							
-						if(aux->cnt != NULL)
-							fprintf(stderr, "contenuto: %s\n", aux->cnt);
-					}
-				}
-			}
+		#ifdef DEBUG
+			fprintf(stderr,"\n---HASHTABLE:\n");
+			print_deb(hash_table);
 		#endif	
+	}
 				
-	free(aux);		
+	//free(aux);		
 	
 	//close(fd_c);
 	close(fd_skt);
