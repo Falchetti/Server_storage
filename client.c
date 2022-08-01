@@ -7,7 +7,7 @@
 #include "api.h"
 
 #define DEBUG
-#undef DEBUG
+//#undef DEBUG
 
 /*Nella mia scelta di progetto conta l'ordine dei flag.
 Il flag f (socketname) deve essere specificato prima di richiedere i flag w,W,r,R,l,u,c 
@@ -19,8 +19,10 @@ idem per il flag t, solo le richieste a lui successive avranno quello specifico 
 
 #define N_FLAG 13
 #define SZ_STRING 1000  //rendi coerente questo se serve con api e server, dovrebbe essere la taglia del contenuto di un file, che deve passare per il canale di comunicazione, quindi < msg_size + taglia comandi
+
 #define MSEC_TENT 1000  //un tentativo al secondo nella openConnection
 #define SEC_TIMEOUT 10 //secondi prima del timeout nella openConnection
+
 #define O_OPEN 0
 #define O_CREATE 1
 #define O_LOCK 2
@@ -32,7 +34,7 @@ idem per il flag t, solo le richieste a lui successive avranno quello specifico 
 
 int main(int argc, char *argv[]){
 	
-	int flag;
+	int flag, n;
 	char *d_read = NULL;
 	char *D_removed = NULL;
 	int t_requests = 0;
@@ -45,11 +47,12 @@ int main(int argc, char *argv[]){
 	char *tmpstr, *token, *buff; //li devo inizializzare a NULL?? (guarda strtok)
 	size_t size;
 	FILE *fp;
+	char *aux;
 
 	
-	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:p")) != -1) && !found_h ){
+	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R::d:t:l:u:c:p")) != -1) && !found_h ){
 		
-		#ifdef DEBUG 
+		#ifdef DEBUG2
 			printf("t_requests = %d, found_r = %d, found_w = %d, found_p = %d\n", t_requests, found_r, found_w, found_p);
 			if( d_read != NULL)   
 				printf("d_read = %s, ", d_read);
@@ -108,7 +111,7 @@ int main(int argc, char *argv[]){
 					while (token) {
 						
 						if(openFile(token, O_LOCK) == -1){ //per scrivere apro il file con la lock 
-							if(errno == ENOENT){
+							if(errno == ENOENT){           //se il file non esiste ne creo uno con attiva la lock 
 								if(openFile(token, O_CREATE_LOCK) == -1){
 									perror("Errore in openFile");
 							        return -1;
@@ -125,43 +128,40 @@ int main(int argc, char *argv[]){
 							    return -1;                      //attenzione che questi return -1 non saltino i cleanup necessari
 						    }
 						}
-						else {
+						else {   //se esite scrivo in append 
 							buff = malloc(SZ_STRING*sizeof(char));
+							
 							if((fp = fopen(token, "r")) == NULL){
 								perror("errore fopen");
 								return -1;
 							}
 							errno = 0;
-							char *aux2 = buff;
+							aux = buff;
+							
 							while (!feof(fp)){
-								fgets(aux2, SZ_STRING, fp);;
-								fprintf(stderr, "hhhh\n"); //non mi mette gli spazi così 
-								aux2 = aux2 + strlen(aux2);
+								fgets(aux, SZ_STRING, fp);;
+								aux = aux + strlen(aux);
 							}
+							
 							if(errno != 0){//va bene questo controllo? va bene come ho aggiornato il file?
 								perror("fscanf fallita\n");
 								return -1;
 							}
 			
 							fclose(fp);
+							
 							if(appendToFile(token, buff, strlen(buff), NULL) == -1){ //probabilmente con questo flag dovrei usare l'appendToFile non la writeFile (per via delle specifiche della openFile)
 								perror("Errore in writeFile");
 								return -1;
 							}
+							
+							free(buff); //NB: così se c'è un errore (return -1) buff non viene deallocato
 						}
+						
 						if (closeFile(token) == -1){
 							perror("Errore in closeFile");
 							return -1;
 						}
-						
-						/*mi assicuro di non poter fare una write se il file non è aperto! 
-						
-						if(readFile(token, (void *) &buff, &size) == -1){
-							perror("Errore in readFile");
-							return -1;
-						}
-						fprintf(stderr, "file letto: %s\n", buff); //NO, NON DOVREBBE FUNZIONARE!
-				        */
 						
 						token = strtok_r(NULL, ",", &tmpstr);
 						
@@ -182,9 +182,8 @@ int main(int argc, char *argv[]){
 				
 				break;
 				
-			case 'r' : //CON QUALE FLAG APRIRE IL FILE, lock o create? probabilmente o_lock 
+			case 'r' :  
 			
-			    //files = optarg;
 				found_r = 1;
 				
 				if(socket_name != NULL){
@@ -203,25 +202,35 @@ int main(int argc, char *argv[]){
 							perror("Errore in readFile");
 							return -1;
 						} 
-						if(buff[0] == '\0')
-							fprintf(stderr, "file letto: VUOTO\n");
-						else
-							fprintf(stderr, "FILE LETTO: %s\n", (char *) buff);
-					
-     					if(d_read == NULL)
-							free(buff); //Altrimenti devo risolvere -d e poi fare la free!!!!
+						
+						#ifdef DEBUG
+							if(buff[0] == '\0')
+								fprintf(stderr, "file letto: VUOTO\n");
+							else
+								fprintf(stderr, "FILE LETTO: %s\n", (char *) buff);
+						#endif
+						
+     					/*if(d_read != NULL){
+							//DIR * mydir;
+							if((dp = opendir("d_read")) == NULL){
+								perror("Apertura directory");
+								return -1;
+							}
+							
+							if(close(dp) == -1{
+								perror("Chiusura directory");
+								return -1;
+							}
+							
+							creafile(token, buff); */
+						
+						free(buff); 
+						
+						
 						if (closeFile(token) == -1){
 							perror("Errore in closeFile");
 							return -1;
 						}
-						/*  //mi assicuro di non poter fare una read se il file non è aperto!
-                            						
-							if(readFile(token, (void *) &buff, &size) == -1){
-								perror("Errore in readFile");
-								return -1;
-							}
-							fprintf(stderr, "file letto: %s\n", buff); //NO, NON DOVREBBE FUNZIONARE!
-						*/
 						
 						token = strtok_r(NULL, ",", &tmpstr);
 						
@@ -235,10 +244,34 @@ int main(int argc, char *argv[]){
 				
 				break;
 				
-			case 'R' :
-				//devi fare tutta la parte di isNum etc 
-				//n_files = optarg;
+			case 'R' :  //per ora senza dirname 
+				if(optarg != NULL){
+					if(isNumber(optarg, &n) != 0){
+						fprintf(stderr,"L'argomento di R deve essere un numero\n");
+						return -1;
+					}
+					else if(n > 0){
+						if(readNFile(n, NULL) == -1){
+							perror("Errore in readFile");
+							return -1;
+						} 
+					}
+					else{ 
+						if(readNFile(0, NULL) == -1){
+							perror("Errore in readFile");
+							return -1;
+						} 
+					}
+				}
+				else{
+					if(readNFile(0, NULL) == -1){
+						perror("Errore in readFile");
+						return -1;
+					} 
+				}
+					
 				found_r = 1;
+				
 				
 				break;
 			
@@ -253,27 +286,20 @@ int main(int argc, char *argv[]){
 				
 				break;
 				
-			case 'l' :  //Devo aprire il file per lare la lock?. Ha sempre a che fare con il flag O_LOCK nel file?
+			case 'l' :  
 			    if(socket_name != NULL){
+					
 					token = strtok_r(optarg, ",", &tmpstr);
 					while (token) { //ho scelto che per fare la lock non devo aprire il file 
-						/*if(openFile(token, 0) == -1){ 
-							perror("Errore in openFile");
-							return -1;                              
-						}*/
+						
 						if(lockFile(token) == -1){
 							perror("Errore in lockFile");
 							return -1;
 						}
-						/*if (closeFile(token) == -1){
-							perror("Errore in closeFile");
-							return -1;
-						}*/
-						token = strtok_r(NULL, ",", &tmpstr);
-						
+					
+						token = strtok_r(NULL, ",", &tmpstr);	
 					}
 				}
-				
 				else{ 
 					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
 					return -1;
@@ -281,25 +307,18 @@ int main(int argc, char *argv[]){
 				
 				break;
 				
-			case 'u' : //Devo aprire il file per lare la lock?. Ha sempre a che fare con il flag O_LOCK nel file?
-			if(socket_name != NULL){
+			case 'u' : 
+				if(socket_name != NULL){
 					
 					token = strtok_r(optarg, ",", &tmpstr);
 					while (token) { //ho scelto che per fare la lock non devo aprire il file 
-						/*if(openFile(token, 0) == -1){ 
-							perror("Errore in openFile");
-							return -1;                             
-						}*/
+					
 						if(unlockFile(token) == -1){
 							perror("Errore in unlockFile");
 							return -1;
 						}
-						/*if (closeFile(token) == -1){
-							perror("Errore in closeFile");
-							return -1;
-						}*/
-						token = strtok_r(NULL, ",", &tmpstr);
 						
+						token = strtok_r(NULL, ",", &tmpstr);	
 					}
 				}
 				
@@ -311,6 +330,25 @@ int main(int argc, char *argv[]){
 				break;
 			
 			case 'c' : 
+			fprintf(stderr, "HHHHHHH\n");
+				if(socket_name != NULL){
+					
+					token = strtok_r(optarg, ",", &tmpstr);
+					while (token) { //ho scelto che per fare la lock non devo aprire il file 
+					
+						if(removeFile(token) == -1){
+							perror("Errore in unlockFile");
+							return -1;
+						}
+						
+						token = strtok_r(NULL, ",", &tmpstr);	
+					}
+				}
+				
+				else{
+					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
+					return -1;
+				} 
 				
 				break;
 				
@@ -350,12 +388,12 @@ int main(int argc, char *argv[]){
 	
 }
 
-/*int isNumber(void *el){
+int isNumber(void *el, int *n){
 	char *e = NULL;
 	errno = 0;
-	strtol(el, &e, 10);
+	*n = strtol(el, &e, 10);
 	if(errno == ERANGE) return 2;
 	if(e != NULL && *e == (char) 0)
 		return 0; 
 	return 1;
-}*/
+}

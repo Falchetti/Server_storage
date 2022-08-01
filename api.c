@@ -183,50 +183,34 @@ int openFile(const char *pathname, int flags){ //per ora senza OR, ci dovrà ess
 			case O_OPEN: //attenzione a strstr 
 			    
 				cmd = "openfo";
-				
-				/*strncpy(msg, "openfo", 7); //vedi se dovevi fare una memset prima
-				strncat(msg, pathname, len+1); //guarda se strncat funziona così, no
-				write(fd_s, msg, len+7);*/
 				break;
+				
 			case O_CREATE:
 				
 				cmd = "openfc";
-				
-				/*strncpy(msg, "openfc", 7); //vedi se dovevi fare una memset prima
-				strncat(msg, pathname, len+1); //guarda se strncat funziona così
-				write(fd_s, msg, len+7);*/
-				
 				break;
 				
 			case O_LOCK:
 			
 				cmd = "openfl";
-				
-				/*strncpy(msg, "openfl", 7); //vedi se dovevi fare una memset prima
-				strncat(msg, pathname, len+1); //guarda se strncat funziona così
-				write(fd_s, msg, len+7);*/
-				
 				break;
+				
 			case O_CREATE_LOCK:
 				
 				cmd = "openfcl";
-				
-				/*strncpy(msg, "openf_cl", 9); //vedi se dovevi fare una memset prima
-				strncat(msg, pathname, len+1); //guarda se strncat funziona così
-				write(fd_s, msg, len+9); */
-				
 				break;
+				
 			default: 
 				
 				fprintf(stderr, "flag errato\n");
 				errno = EINVAL;
 				errore = 1;
 		}
+		
 		if(!errore && msg_sender(msg, fd_s, cmd, pathname, NULL) == -1){
 			fprintf(stderr, "Errore in invio messaggio al server\n");
 			errore = 1;
 		}		
-		
 			
 		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
 			perror("read socket lato client");
@@ -258,7 +242,7 @@ int openFile(const char *pathname, int flags){ //per ora senza OR, ci dovrà ess
 		
 }
 
-int closeFile(const char *pathname){ //rilascia le lock 
+int closeFile(const char *pathname){ //rilascia le lock!! 
 
     int errore = 0;
 	char *msg ;
@@ -319,7 +303,7 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 	    }
 		
 		if(!errore && strstr(msg, "Ok") == NULL){
-			fprintf(stderr, "buff di lettura NULL, msg del server: %s\n", msg);
+			fprintf(stderr, "buff di lettura NULL, msg del server: %s\n", msg); //perchè buff di lettura null?
 			errno = -1; //come lo setto errno in questo caso???
 		}
 		
@@ -328,7 +312,6 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 			//memmove(*buf, (char *) *buf + 2, strlen((char *) *buf)); //perchè qui mmve e in altri casi direttamente *buf +2?
 			*size = strlen(*buf); //va bene?	
 		}
-		
 	}
 	else{
 		errno = ENOTCONN;
@@ -344,26 +327,30 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 }
 	
 int lockFile(const char *pathname){
-	int len;
-	char *msg;
+	
+	int errore = 0;
+	char *msg ;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
 	
+	
 	if(fd_s != -1){
-		len = strlen(pathname);
-		msg = malloc(MSG_SIZE*sizeof(char));
-		strncpy(msg, "lckf", 6); //vedi se dovevi fare una memset prima
-		strncat(msg, pathname, len+1); //guarda se strncat funziona così
-		write(fd_s, msg, len+6);
 		
-		if(read(fd_s, msg, MSG_SIZE) == -1){
+		msg = malloc(MAX_SIZE*sizeof(char));
+		
+		if(!errore && msg_sender(msg, fd_s, "lockf", pathname, NULL) == -1){
+			fprintf(stderr, "Errore in invio messaggio al server\n");
+			errore = 1;
+		}
+		
+		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
 			perror("read socket lato client");
-			return -1; //ok?
+			errore = 1;
 	    }
-		if(strcmp(msg, "Ok") != 0){
-			errno = -1;//come lo setto errno in questo caso???
+		
+		if(!errore && strcmp(msg, "Ok") != 0){
 			fprintf(stderr, "Esito dal server: %s\n", msg);
-		    free(msg);
-			return -1;
+			errno = -1;//come lo setto errno in questo caso???
+			errore = 1;
 		}
 	}
 	else{
@@ -372,30 +359,36 @@ int lockFile(const char *pathname){
 		return -1;
 	}
 	
+	free(msg);
+
+	if(errore)
+		return -1;
+
 	return 0;
 }
 
 int unlockFile(const char *pathname){
-	int len;
+	
+	int errore = 0;
 	char *msg;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
 	
 	if(fd_s != -1){
-		len = strlen(pathname);
-		msg = malloc(MSG_SIZE*sizeof(char));
-		strncpy(msg, "unlockf", 8); //vedi se dovevi fare una memset prima
-		strncat(msg, pathname, len+1); //guarda se strncat funziona così
-		write(fd_s, msg, len+8);
 		
-		if(read(fd_s, msg, MSG_SIZE) == -1){
+		msg = malloc(MAX_SIZE*sizeof(char));
+		
+		if(!errore && msg_sender(msg, fd_s, "unlockf", pathname, NULL) == -1){
+			fprintf(stderr, "Errore in invio messaggio al server\n");
+			errore = 1;
+		}
+		
+		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
 			perror("read socket lato client");
-			return -1; //ok?
-	    }
-		if(strcmp(msg, "Ok") != 0){
-			errno = -1;//come lo setto errno in questo caso???
+			errore = 1;
+		}
+		if(!errore && strcmp(msg, "Ok") != 0){
 			fprintf(stderr, "Esito dal server: %s\n", msg);
-		    free(msg);
-			return -1;
+			errno = -1;//come lo setto errno in questo caso???
 		}
 	}
 	else{
@@ -403,6 +396,11 @@ int unlockFile(const char *pathname){
 		perror("Connessione chiusa");
 		return -1;
 	}
+	
+	free(msg);
+
+	if(errore)
+		return -1;
 	
 	return 0;
 }
@@ -416,15 +414,16 @@ int writeFile(const char *pathname, const char* dirname) {
 		
 	if(fd_s != -1){ //controllo se sono connesso 
 	
-		msg = malloc(MSG_SIZE*sizeof(char));
+		msg = malloc(MAX_SIZE*sizeof(char));
 		
 		if((fp = fopen(pathname, "r")) == NULL){
 			perror("errore nella fopen"); //devo controllare se va a buon fine SI
             free(msg);
             return -1;
         }			
+		
 		aux = malloc(MSG_SIZE*sizeof(char));
-		errno = 0;
+		errno = 0; //ok?
    
         aux2 = aux;
         while (!feof(fp)){
@@ -438,27 +437,64 @@ int writeFile(const char *pathname, const char* dirname) {
 		}
 	
 		fclose(fp);
+		
 		if(!errore && msg_sender(msg, fd_s, "writef", pathname, aux) == -1){
 			fprintf(stderr, "Errore in invio messaggio al server\n");
 			errore = 1;
 		}
 	 
-		//read(fd_s, msg, MSG_SIZE);
-		//fprintf(stderr, "MESSAGGIO WRITE SERVER: %s, errore %d\n", msg, errore);
 		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
 			perror("read socket lato client");
 			errore = 1; //ok?
 	    }
-	
 		
 		if(!errore &&  strcmp(msg, "Ok") != 0){
 			fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
 		    errno = -1; //come lo setto errno in questo caso???
 			errore = 1;
+		}		
+	}
+	else{
+		errno = ENOTCONN;
+		perror("Connessione chiusa");
+		return -1;
+	}
+	
+	free(aux);
+	free(msg);
+	
+	if(errore){
+		return -1;
+	}
+
+	return 0; 
+}
+
+int appendToFile(const char *pathname, void *buf, size_t size, const char* dirname) {
+	
+	int errore = 0;
+	char *msg;
+	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	
+	if(fd_s != -1){ //controllo se sono connesso 
+		
+		msg = malloc(MAX_SIZE*sizeof(char));
+		
+		if(!errore && msg_sender(msg, fd_s, "appendTof", pathname, buf) == -1){
+			fprintf(stderr, "Errore in invio messaggio al server\n");
+			errore = 1;
 		}
 		
+		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
+			perror("read socket lato client");
+			errore = 1;
+	    }
 		
-		
+		if(!errore && strcmp(msg, "Ok") != 0){
+			fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
+			errno = -1; //come lo setto errno in questo caso???
+			errore = 1;
+		}
 	}
 	else{
 		errno = ENOTCONN;
@@ -470,35 +506,37 @@ int writeFile(const char *pathname, const char* dirname) {
 	if(errore){
 		return -1;
 	}
-	free(aux);
+	
 	return 0; 
 }
 
-int appendToFile(const char *pathname, void *buf, size_t size, const char* dirname) {
+int removeFile(const char *pathname){
 	
-	int len;
-	char *msg;
+	int errore = 0;
+	char *msg ;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
 	
-	if(fd_s != -1){ //controllo se sono connesso 
-		len = strlen(pathname);
-		msg = malloc(MSG_SIZE*sizeof(char));
-		strncpy(msg, "appendtof;", 11); //vedi se devi contare il terminatore e se dovevi fare una memset prima
-	    strncat(msg, pathname, len+1); //guarda se strncat funziona così
-    	strncat(msg, ";", 2);
-		strncat(msg, buf, size); //guarda se strncat funziona così
-		write(fd_s, msg, len+size+11);
+	
+	if(fd_s != -1){
 		
-		if( read(fd_s, msg, MSG_SIZE) == -1){
+		msg = malloc(MAX_SIZE*sizeof(char));
+		
+		if(!errore && msg_sender(msg, fd_s, "removef", pathname, NULL) == -1){
+			fprintf(stderr, "Errore in invio messaggio al server\n");
+			errore = 1;
+		}
+		
+		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
 			perror("read socket lato client");
-			return -1; //ok?
+			errore = 1;
 	    }
 		
-		if((void *) strstr(msg, "Ok") == NULL){
-			errno = -1; //come lo setto errno in questo caso???
-			fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
-		    free(msg);
-			return -1;
+		if(!errore && strcmp(msg, "Ok") != 0){
+			if(strstr(msg, "fail") == NULL){
+				errno = -1;//come lo setto errno in questo caso???
+				errore = 1;
+			}
+			fprintf(stderr, "Esito dal server: %s\n", msg);
 		}
 	}
 	else{
@@ -507,10 +545,116 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char* dirna
 		return -1;
 	}
 	
-	return 0; 
-//
+	free(msg);
+
+	if(errore)
+		return -1;
+
+	return 0;
 }
+
+int readNFile(int N, const char *dirname){
+	return 0;
+}
+
+/*
+int readNFile(int N, const char *dirname){
+	int errore = 0;
+	char *msg, *num;
+	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
+	char *token_name, *token_cnt;
+	
+	
+	if(fd_s != -1){
 		
+		msg = malloc(MAX_SIZE*sizeof(char));
 		
+		token_name = malloc(MSG_SIZE*sizeof(char));
+		token_cnt = malloc(MSG_SIZE*sizeof(char));
+		
+		if(sprintf(num, "%d", N) < 1){
+			fprintf(stderr, "Errore conversione int to string\n");
+			errore = 1;
+		}			
+		if(!errore && msg_sender(msg, fd_s, "removeNf", num, NULL) == -1){
+			fprintf(stderr, "Errore in invio messaggio al server\n");
+			errore = 1;
+		}
+	
+		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
+			perror("read socket lato client");
+			errore = 1;
+		}
+		
+		if(!errore && isNumber(msg, &N) != 0){
+			fprintf(stderr,"msg errato dal server: %s\n", msg);
+			errore = 1;
+		}
+		
+		if(!errore){
+			write(fd_c, "Ok", 3);			
+			for(int i = 0; i < N; i++){
+				
+				if(read(fd_s, msg, MSG_SIZE) == -1){
+					perror("read socket lato client");
+					errore = 1;
+					break;
+				}
+				if(strstr(msg, "err") != NULL){
+					fprintf(stderr, "msg errato dal server: %s\n", msg);
+					errore = 1;
+					break;
+				}
+				else{						
+					token_name = strtok_r(msg, ";", &tmpstr); //recupero nome file
+					if(token_name == NULL || token_name[0] == '\0'){
+						fprintf(stderr, "nome file vuoto\n");
+						errore = 1;
+						break;
+					}
+					else{
+						creo_file(token_name);   //creo file
+					}
+												
+					token_cnt = strtok_r(NULL, ";", &tmpstr); //recupero contenuto file 
+					
+					if(token_cnt == NULL ){
+						fprintf(stderr, "contenuto file NULL\n");
+						errore = 1;
+						break;
+					}
+					else{
+						scrivo_file(token_name, token_cnt);	//scrivo il contenuto (tutto o parte)				
+					
+						token_cnt = strtok_r(NULL, ";", &tmpstr); //controllo flag per sapere se il cnt è finito 
+						
+						while(token_cnt != NULL && strcmp(token_cnt, "N") == 0){ //se non ho finito 
+							read(fd_c, msg, MSG_SIZE);
+							token_cnt = strtok_r(msg, ";", &tmpstr);  //recupero il contenuto restante
+							
+							append_to_file(token_name, token_cnt);   //lo scrivo in append, potrei anche scrivere tutto in buff e poi fare una write alla fine 
+							token_cnt = strtok_r(NULL, ";", &tmpstr);  
+							write(fd_c, "Ok", 3);
+						}
+					}
+				}
+			}
+		}
+	}
+	else{
+		errno = ENOTCONN;
+		perror("Connessione chiusa");
+		return -1;
+	}
+	
+	free(msg);
+	free(token_cnt);
+	free(token_name);
+
+	if(errore)
+		return -1;
+
+	return 0;
+}*/
 	
 	

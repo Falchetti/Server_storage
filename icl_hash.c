@@ -274,10 +274,15 @@ icl_hash_update_insert(icl_hash_t *ht, void* key, void *data, void **olddata)
  *
  * @returns 0 on success, -1 on failure.
  */
-int icl_hash_delete(icl_hash_t *ht, void* key, void (*free_key)(void*), void (*free_data)(void*))
+ 
+ //ho modificato la segnatura, potrei migliorarlo però
+int icl_hash_delete(icl_hash_t *ht, void* key) 
 {
     icl_entry_t *curr, *prev;
     unsigned int hash_val;
+	//MODIFICA
+	open_node *aux;
+	//------------
 
     if(!ht || !key) return -1;
     hash_val = (* ht->hash_function)(key) % ht->nbuckets;
@@ -290,8 +295,23 @@ int icl_hash_delete(icl_hash_t *ht, void* key, void (*free_key)(void*), void (*f
             } else {
                 prev->next = curr->next;
             }
-            if (*free_key && curr->key) (*free_key)(curr->key);
-            if (*free_data && curr->data) (*free_data)(curr->data);
+			
+			//** INIZIO MODIFICHE **
+            if (curr->key){
+				free(curr->key); //ATTENZIONE
+			}
+            if (curr->data){
+				if(((file_info *)curr->data)->cnt != NULL)
+					free(((file_info *)curr->data)->cnt);
+				while((aux = ((file_info *)curr->data)->open_owners) != NULL){
+					((file_info *)curr->data)->open_owners = ((file_info *)curr->data)->open_owners->next;
+					free(aux);
+					aux = ((file_info *)curr->data)->open_owners;
+				}
+			}
+			//** FINE MODIFICHE **
+						
+						
             ht->nentries++;
             free(curr);
             return 0;
