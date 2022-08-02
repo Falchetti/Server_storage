@@ -18,4 +18,8 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char *dirna
 int removeFile(const char *pathname);
 int readNFile(int N, const char *dirname);
 
+
+int save_file(const char *dir, char *file, char *buff);
+
+
 #endif

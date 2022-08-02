@@ -5,10 +5,11 @@
 #include <unistd.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <time.h>
 #include "icl_hash.h"
 
 #define DEBUG
-//#undef DEBUG
+#undef DEBUG
 
 #define UNIX_PATH_MAX 108 //lunghezza massima path
 #define MSG_SIZE  130 //path + spazio comandi 
@@ -18,7 +19,7 @@
 #define SOCKNAME "/home/giulia/Server_storage/mysock" //in realtà lo leggo dal file di configurazione credo 
 #define NBUCKETS  256 // n. di buckets nella tabella hash, forse sempre legato alla config 
 #define MAX_REQ   20 //n. max di richieste in coda 
-#define N 20
+#define N 30
 
 
 
@@ -55,6 +56,8 @@ int lockF(icl_hash_t *ht, char *path, int fd);
 int unlockF(icl_hash_t *ht, char *path, int fd);
 int appendToF(icl_hash_t *ht, char *path, char *cnt, int fd);
 int removeF(icl_hash_t *ht, char *path, int fd);
+int readAF(icl_hash_t *ht, int fd, int seed);
+int readAllF(icl_hash_t *ht, int fd);
 
 
 
@@ -64,7 +67,8 @@ int main(int argc, char *argv[]){
 	char *msg; 
 	char *token, *token2;
 	char *tmpstr;
-		
+	int seed = time(NULL); 
+	
 	struct sockaddr_un sa;
 	
 	memset(&sa, 0, sizeof(struct sockaddr_un));
@@ -186,6 +190,17 @@ int main(int argc, char *argv[]){
 					i = N;
 				}
 			}
+			else if(strcmp(token, "readAf") == 0){
+				if(readAF(hash_table, fd_c, seed) == -1){
+					i = N;
+				}
+				seed++;
+			}
+			else if(strcmp(token, "readAllf") == 0){
+				if(readAllF(hash_table, fd_c) == -1){
+					i = N;
+				}
+			}	
 			else{
 				fprintf(stderr, "Opzione non ancora implementata\n");
 				write(fd_c, "Ok", 3);
@@ -339,7 +354,7 @@ int openFL(icl_hash_t *ht, char *path, int fd){
 	//HO CIRCA COPIATO IL CODICE DEL SERVER SUL MESSAGGIO LCKF, POI IMPACCHETTA TUTTO IN DELLE FUNZIONI 		
 	file_info *tmp;
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
-		fprintf(stderr, "Impossibile fare lock su file non esistente\n");
+		fprintf(stderr, "Impossibile fare lock su file non esistente\n"); //me lo stampa ogni volta che creo un file, aggiustalo
 		write(fd, "Err:fileNonEsistente", 21); 
 		/*char * msg = malloc(MSG_SIZE*sizeof(char));
 		
@@ -626,7 +641,7 @@ int appendToF(icl_hash_t *ht, char *path, char *cnt, int fd){
 	return 0;
 }
 
-int removeF(icl_hash_t *ht, char *path, int fd){ //free(data)?
+int removeF(icl_hash_t *ht, char *path, int fd){ //controlla di aver liberato bene la memoria
 	file_info *tmp;
 	
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
@@ -656,3 +671,111 @@ int removeF(icl_hash_t *ht, char *path, int fd){ //free(data)?
 	}
 	return 0;
 }
+
+int readAF(icl_hash_t *ht, int fd, int seed){
+    char *msg = malloc(MSG_SIZE*sizeof(char));	
+	    
+	icl_entry_t *entry;
+	char *key, *value;
+	int k;
+	int found = 0;
+	srand(seed); //da aggiustare 
+	int num = NBUCKETS;
+	if (ht) {
+		file_info *aux;
+		while(!found && num > 0){
+			k = rand()%NBUCKETS; //così non è detto io li controlli tutti
+			for (entry = ht->buckets[k]; !found && entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
+				//openFL(key);
+				aux = icl_hash_find(ht, key);
+				//closeF(key);
+				found = 1;
+				strcpy(msg, "Ok;"); //vedi se sovrascrive
+				strncat(msg, key, MSG_SIZE - strlen(msg) - 1);
+				if(aux != NULL){
+					if(aux->cnt != NULL){
+						strncat(msg, ";", MSG_SIZE - strlen(msg) - 1);
+						strncat(msg, aux->cnt, MSG_SIZE - strlen(msg) - 1);
+					}
+				}
+				
+				write(fd, msg, strlen(msg)+1);
+			}
+			num--;
+		}
+	}
+	else{
+		fprintf(stderr, "hash table vuota\n");
+		write(fd, "Err", 4);
+	}
+		
+	
+	
+	#ifdef DEBUG
+		fprintf(stderr,"---SEND RANDOM FILE %s \n", msg);
+		print_deb(ht);
+	#endif
+	if(num == 0){
+		fprintf(stderr, "Nessun file trovato\n");
+		write(fd, "Err", 4);
+	}
+	free(msg);
+	
+	return 0;			
+}
+
+int readAllF(icl_hash_t *ht, int fd){
+    char *msg = malloc(MSG_SIZE*sizeof(char));	
+	    
+	icl_entry_t *entry;
+	char *key, *value;
+	int go = 1;
+	int k;
+	
+	if (ht) {
+		file_info *aux;
+		for (k = 0; k < ht->nbuckets && go; k++)  {
+			for (entry = ht->buckets[k]; go && entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
+				//openFL(key);
+				aux = icl_hash_find(ht, key);
+				//closeF(key);
+				strcpy(msg, "Ok;"); //vedi se sovrascrive
+				strncat(msg, key, MSG_SIZE - strlen(msg) - 1);
+				if(aux != NULL){
+					if(aux->cnt != NULL){
+						strncat(msg, ";", MSG_SIZE - strlen(msg) - 1);
+						strncat(msg, aux->cnt, MSG_SIZE - strlen(msg) - 1);
+					}
+				}
+				write(fd, msg, strlen(msg)+1);
+					
+				if(read(fd, msg, MSG_SIZE) == -1){
+					perror("errore lettura");
+					free(msg);
+					return -1;
+				}
+				if(strcmp(msg, "Ok") != 0)
+					go = 0;
+			}
+		}
+	}
+	else{
+		fprintf(stderr, "hash table vuota\n");
+		write(fd, "Err", 4);
+	}
+	write(fd, "STOP", 5);	
+	
+	#ifdef DEBUG
+		fprintf(stderr,"---SEND ALL FILES %s \n", msg);
+		print_deb(ht);
+	#endif
+	
+	free(msg);
+	
+	return 0;			
+}
+
+
+
+
+

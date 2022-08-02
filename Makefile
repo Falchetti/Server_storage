@@ -43,4 +43,4 @@ test2 :
 	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
 	
 test :
-	./client -f /home/giulia/Server_storage/mysock -W pippo,minnie -r pippo -l pippo -c pippo  & ./server
+	./client -f /home/giulia/Server_storage/mysock -W minnie,pippo,bobby -d dir8 -R -W pippo  & ./server

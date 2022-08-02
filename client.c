@@ -4,10 +4,17 @@
 #include <errno.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <dirent.h>
+
+
 #include "api.h"
 
+#define UNIX_PATH_MAX 108
+#define MAX_SIZE 230
+
 #define DEBUG
-//#undef DEBUG
+#undef DEBUG
 
 /*Nella mia scelta di progetto conta l'ordine dei flag.
 Il flag f (socketname) deve essere specificato prima di richiedere i flag w,W,r,R,l,u,c 
@@ -30,7 +37,11 @@ idem per il flag t, solo le richieste a lui successive avranno quello specifico 
 
 //QUANDO CHIUDO IL CLIENT (vari return -1) ricordati di fare pulizia, di disconnettere la comunicazione (e i file aperti??)
 
-//int isNumber(void *);
+int isNumber(void *, int *n);
+//int save_file(const char *dir, char *file, char *buff);
+void lsR(const char *dir, int *err, int *n, int flag);
+int isdot(const char dir[]);
+int write_file(char *file);
 
 int main(int argc, char *argv[]){
 	
@@ -98,8 +109,71 @@ int main(int argc, char *argv[]){
 				//dir_etc = optarg;
 				//ricordati della parte n 
 				found_w = 1;
+					
+				if(socket_name != NULL){ //mi assicuro la connessione sia aperta 
+					 
+					token = strtok_r(optarg, ",", &tmpstr); 
+					char *dir = token;
+					token = strtok_r(NULL, ",", &tmpstr); 
+					if(token != NULL){
+						if(isNumber(token, &n)!= 0){ 
+							fprintf(stderr,"Il secondo argomento di w non è un numero\n");
+							token = NULL;
+						}
+					}
+					
+					struct stat st = {0};
+
+					if (stat(dir, &st) == -1){
+						perror("directory non esistente");
+						return -1;
+					}
+					else{
+						if(!S_ISDIR(st.st_mode)){
+							fprintf(stderr, "%s non e' una directory\n", dir);
+							return -1;
+						} 
+					}
+					
+					int err = 0;
+					fprintf(stderr, "directory: %s\n", dir);
+					if(token == NULL || n == 0){
+						n = 1;
+					    lsR(dir, &err, &n, 0);
+					}
+					else
+						lsR(dir, &err, &n, 1);
+					
+					
+					
+					if(err != 0){
+						fprintf(stderr, "errore ricorsione directory\n");
+						return -1;
+					}
+					/*char *dir_curr[UNIX_PATH_MAX];
+					if(getcwd(dir_curr, UNIX_PATH_MAX) == NULL){
+						perror("getcwd");
+						return -1;
+					}
+					if(chdir(dir) == -1){
+						perror("chdir");
+						return -1;
+					}	
+					}
+					if(chdir(dir_curr == -1){
+						perror("chdir");
+						return -1;
+					}*/				
+					
+				}
+				
+				else{
+					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
+					return -1;
+				} 
 				
 				break;
+				
 			
 			case 'W' : 
 				//files = optarg;
@@ -210,22 +284,11 @@ int main(int argc, char *argv[]){
 								fprintf(stderr, "FILE LETTO: %s\n", (char *) buff);
 						#endif
 						
-     					/*if(d_read != NULL){
-							//DIR * mydir;
-							if((dp = opendir("d_read")) == NULL){
-								perror("Apertura directory");
+     					if(d_read != NULL)
+							if(save_file(d_read, token, buff) == -1){
+								//serve una stampa?
 								return -1;
 							}
-							
-							if(close(dp) == -1{
-								perror("Chiusura directory");
-								return -1;
-							}
-							
-							creafile(token, buff); */
-						
-						free(buff); 
-						
 						
 						if (closeFile(token) == -1){
 							perror("Errore in closeFile");
@@ -233,6 +296,8 @@ int main(int argc, char *argv[]){
 						}
 						
 						token = strtok_r(NULL, ",", &tmpstr);
+						free(buff); //ha senso dentro al while?
+						
 						
 					}
 				}
@@ -244,42 +309,44 @@ int main(int argc, char *argv[]){
 				
 				break;
 				
-			case 'R' :  //per ora senza dirname 
+			case 'R' :  //per ora senza dirname, ATTUALMENTE NON FUNZIONA L'ARGOMENTO OPZIONALE
 				if(optarg != NULL){
+					fprintf(stderr, "%s nbb\n", optarg);
 					if(isNumber(optarg, &n) != 0){
 						fprintf(stderr,"L'argomento di R deve essere un numero\n");
 						return -1;
 					}
 					else if(n > 0){
-						if(readNFile(n, NULL) == -1){
+						if(readNFile(n, d_read) == -1){
 							perror("Errore in readFile");
 							return -1;
 						} 
 					}
-					else{ 
-						if(readNFile(0, NULL) == -1){
+					else if(n == 0) { 
+						if(readNFile(0, d_read) == -1){
 							perror("Errore in readFile");
 							return -1;
 						} 
+					}
+					else{
+						perror("l'argomento di R deve essere un numero positivo");
+						return -1;
 					}
 				}
 				else{
-					if(readNFile(0, NULL) == -1){
+					if(readNFile(2, d_read) == -1){ //METTI 0 POI
 						perror("Errore in readFile");
 						return -1;
 					} 
 				}
-					
-				found_r = 1;
 				
+				found_r = 1;
 				
 				break;
 			
 			case 'd' :
 				d_read = optarg;
 				found_r = 0; //ogni volta che inserisco una nuova directory azzero found_r 
-				//ricordati se serve di fare la free di buff, o comunque di capire come liberarlo
-				
 				break;
 				
 			case 't' :
@@ -330,7 +397,6 @@ int main(int argc, char *argv[]){
 				break;
 			
 			case 'c' : 
-			fprintf(stderr, "HHHHHHH\n");
 				if(socket_name != NULL){
 					
 					token = strtok_r(optarg, ",", &tmpstr);
@@ -396,4 +462,191 @@ int isNumber(void *el, int *n){
 	if(e != NULL && *e == (char) 0)
 		return 0; 
 	return 1;
+}
+/*
+int save_file(const char *dir, char *file, char *buff){
+	
+	char *path_file = malloc(UNIX_PATH_MAX*sizeof(char));
+	struct stat st = {0};
+
+	if (stat(dir, &st) == -1) {
+		if(mkdir(dir, S_IRWXU) == -1){
+			perror("Creazione directory");
+			return -1;
+		}
+	}
+	else{
+		if(!S_ISDIR(st.st_mode)) {
+			fprintf(stderr, "%s non e' una directory\n", dir);
+			return -1;
+		} 
+	}
+	
+	snprintf(path_file, UNIX_PATH_MAX, "%s/%s", dir, file);
+
+	FILE *fp;
+	if((fp = fopen(path_file, "w")) == NULL){
+		perror("Apertura file");
+		return -1;
+	}
+	if(fprintf(fp, "%s", buff) < 0){
+		perror("Scrittura su  file");
+		return -1;
+	}
+	
+	if(fclose(fp) == -1){
+		perror("Chiusura file");
+		return -1;
+	}
+				
+	free(path_file); 
+	
+	return 0;
+}*/
+
+int isdot(const char dir[]) {
+  int l = strlen(dir);
+  
+  if ( (l>0 && dir[l-1] == '.') ) return 1;
+  return 0;
+}
+
+void lsR(const char *dir, int *err, int *n, int flag) {
+    // controllo che il parametro sia una directory
+
+		
+	if(!(*err) && *n > 0){
+		struct stat st = {0};
+		
+		if (stat(dir, &st) == -1){
+			perror("directory non esistente");
+			*err = 1;
+			return;
+		}
+		else{
+			if(!S_ISDIR(st.st_mode)){
+				fprintf(stderr, "%s non e' una directory\n", dir);
+				*err = 1;
+				return;
+			} 
+		}
+
+		DIR * dp;
+		fprintf(stdout, "-----------------------\n");
+		fprintf(stdout, "Directory %s:\n", dir);
+		
+		if ((dp = opendir(dir)) == NULL) {
+			perror("opendir");
+			fprintf(stderr, "Errore aprendo la directory %s\n", dir);
+			*err = 1;
+			return;
+		}
+		else {
+		struct dirent *file;
+		
+		while((errno=0, file = readdir(dp)) != NULL) {
+			struct stat statbuf;
+			
+			char filename[UNIX_PATH_MAX]; 
+			
+			int len1 = strlen(dir);
+			int len2 = strlen(file->d_name);
+			
+			if ((len1 + len2 + 2) > UNIX_PATH_MAX) {
+				fprintf(stderr, "ERRORE: UNIX_PATH_MAX troppo piccolo\n");
+				*err = 1;
+				return;
+			}	    
+			strncpy(filename,dir, UNIX_PATH_MAX-1);
+			strncat(filename,"/", UNIX_PATH_MAX-1);
+			strncat(filename,file->d_name, UNIX_PATH_MAX-1);
+			
+			if (stat(filename, &statbuf) == -1) {
+				perror("eseguendo la stat");
+				fprintf(stderr, "Errore nel file %s\n", filename);
+				*err = 1;
+				return;
+			}
+			if(S_ISDIR(statbuf.st_mode)) {
+				if ( !isdot(filename) ) 
+					lsR(filename, err, n, flag);
+			}
+			else if(S_ISREG(statbuf.st_mode)){
+				if(*n <= 0)
+					return;
+				if(write_file(filename) == -1){
+					fprintf(stderr, "scrittura file in -w\n");
+					*err = 1;
+					return;
+				}
+				fprintf(stderr, "proviamo %d\n", *n);
+				if(flag)
+					*n = *n - 1;
+			}
+		}
+		if (errno != 0) perror("readdir");
+		closedir(dp);
+		fprintf(stdout, "-----------------------\n");
+		}
+	}
+	return;
+}
+
+int write_file(char *file){
+	char *buff, *aux;
+	FILE *fp;
+	//***********COPIATO DA -W
+	if(openFile(file, O_LOCK) == -1){ //per scrivere apro il file con la lock 
+		if(errno == ENOENT){           //se il file non esiste ne creo uno con attiva la lock 
+			if(openFile(file, O_CREATE_LOCK) == -1){
+				perror("Errore in openFile");
+				return -1;
+			}
+			if(writeFile(file, NULL) == -1){ //probabilmente con questo flag dovrei usare l'appendToFile non la writeFile (per via delle specifiche della openFile)
+				perror("Errore in writeFile");
+				return -1;
+			}
+				
+		}
+		else {
+			perror("Errore in openFile");
+			return -1;                      //attenzione che questi return -1 non saltino i cleanup necessari
+		}
+	}
+	else {   //se esite scrivo in append 
+		buff = malloc(SZ_STRING*sizeof(char));
+		
+		if((fp = fopen(file, "r")) == NULL){
+			perror("errore fopen");
+			return -1;
+		}
+		errno = 0;
+		aux = buff;
+		
+		while (!feof(fp)){
+			fgets(aux, SZ_STRING, fp);;
+			aux = aux + strlen(aux);
+		}
+		
+		if(errno != 0){//va bene questo controllo? va bene come ho aggiornato il file?
+			perror("fscanf fallita\n");
+			return -1;
+		}
+
+		fclose(fp);
+		
+		if(appendToFile(file, buff, strlen(buff), NULL) == -1){ //probabilmente con questo flag dovrei usare l'appendToFile non la writeFile (per via delle specifiche della openFile)
+			perror("Errore in writeFile");
+			return -1;
+		}
+		
+		free(buff); //NB: così se c'è un errore (return -1) buff non viene deallocato
+	}
+	
+	if (closeFile(file) == -1){
+		perror("Errore in closeFile");
+		return -1;
+	}
+	//***** FINE copia
+return 0;
 }
