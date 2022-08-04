@@ -136,7 +136,7 @@ int main(int argc, char *argv[]){
 					}
 					
 					int err = 0;
-					fprintf(stderr, "directory: %s\n", dir);
+					//fprintf(stderr, "directory: %s\n", dir);
 					if(token == NULL || n == 0){
 						n = 1;
 					    lsR(dir, &err, &n, 0);
@@ -401,11 +401,17 @@ int main(int argc, char *argv[]){
 					
 					token = strtok_r(optarg, ",", &tmpstr);
 					while (token) { //ho scelto che per fare la lock non devo aprire il file 
-					
-						if(removeFile(token) == -1){
-							perror("Errore in unlockFile");
+					 
+						if(lockFile(token) == -1){
+							perror("Errore in lockFile");
 							return -1;
 						}
+						if(removeFile(token) == -1){
+							perror("Errore in removeFile");
+							return -1;
+						}
+						
+                        //lo cancello quindi non ha senso l'unlock 
 						
 						token = strtok_r(NULL, ",", &tmpstr);	
 					}
@@ -532,8 +538,8 @@ void lsR(const char *dir, int *err, int *n, int flag) {
 		}
 
 		DIR * dp;
-		fprintf(stdout, "-----------------------\n");
-		fprintf(stdout, "Directory %s:\n", dir);
+		//fprintf(stdout, "-----------------------\n");
+		//fprintf(stdout, "Directory %s:\n", dir);
 		
 		if ((dp = opendir(dir)) == NULL) {
 			perror("opendir");

@@ -3,20 +3,27 @@ CC = gcc
 #qui da aggiungere c99 
 CFLAGS = -Wall -pedantic 
 
-TARGETS = server client clean test
+#TARGETS = server client clean test
+TARGETS = server_mw client clean test
 
 #genera tutti gli eseguibili
 all	: $(TARGETS) 
 
 .PHONY : clean, test, cleanall
 
-server : server.o icl_hash.o 
-	$(CC) $(CFLAGS) $^ -o $@
+#server : server.o icl_hash.o 
+#	$(CC) $(CFLAGS) $^ -o $@
+
+server_mw : server_mw.o icl_hash.o 
+	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 
 #così se modifico solo icl_hash questo modulo oggetto non viene ricreato 
 #MA questo sarebbe vero solo se non cancellassi con clean i moduli oggetto 
-server.o : server.c icl_hash.h 
-	$(CC) $(CFLAGS) -c $< -o $@
+
+#server.o : server.c icl_hash.h 
+#	$(CC) $(CFLAGS) -c $< -o $@
+server_mw.o : server_mw.c icl_hash.h 
+	$(CC) $(CFLAGS) -c $< -o $@ -lpthread
 
 client : client.o api.o
 	$(CC) $(CFLAGS) $^ -o $@
@@ -43,4 +50,4 @@ test2 :
 	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
 	
 test :
-	./client -f /home/giulia/Server_storage/mysock -W minnie,pippo,bobby -R -W pippo  & ./server
+	./client -f /home/giulia/Server_storage/mysock -w dirw,3 -W sasuke,itachi -d savings -r sasuke -c sasuke,itachi  & ./server_mw 

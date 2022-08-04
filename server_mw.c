@@ -10,7 +10,7 @@
 #include "icl_hash.h"
 
 #define DEBUG
-#undef DEBUG
+//#undef DEBUG
 
 #define UNIX_PATH_MAX 108 //lunghezza massima path
 #define MSG_SIZE  130 //path + spazio comandi 
@@ -20,7 +20,7 @@
 #define SOCKNAME "/home/giulia/Server_storage/mysock" //in realtà lo leggo dal file di configurazione credo 
 #define NBUCKETS  256 // n. di buckets nella tabella hash, forse sempre legato alla config 
 #define MAX_REQ   20 //n. max di richieste in coda 
-#define N 30
+#define N 60
 #define THREAD_NUM 4
 
 //ricordati di pensare alle lock su l'hashtable 
@@ -105,9 +105,6 @@ int dequeue(){
 
 
 int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo faccio chiamando la giusta funzione, rispondo al client, scrivo fd sulla pipe per il server  
-	/*int res;
-	res= fd * 2;
-	fprintf(stderr, "il doppio di %d è %d\n", fd, res);*/
 	
 	char *msg = malloc(MSG_SIZE*sizeof(char)); //controlla la malloc 
 	char *tmpstr, *token, *token2;
@@ -228,13 +225,12 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 		print_deb(hash_table);
 	#endif	
 	
-	//SCRIVI SULLA PIPE
 	
 	return 0;
 }
 
 void *init_thread(void *args){ //CONSUMATORE
-	int fd;
+	int  fd;
 	
 	while(1){
 		
@@ -243,15 +239,23 @@ void *init_thread(void *args){ //CONSUMATORE
 		while(coda == NULL) 
 			pthread_cond_wait(&condCoda, &mutexCoda); 
 		
+		//fprintf(stderr, "SVEGLIATO\n");
+		
 		if((fd = dequeue()) == -1){
 			fprintf(stderr,"Errore dequeue, init thread\n");
 			exit(1); //da modificare 
 		}
+		
+		//fprintf(stderr, "Ho tolto dalla coda fd: %d\n", fd);
 
 		pthread_mutex_unlock(&mutexCoda);
 
 		if(executeTask(fd) == -1)
-			return -1; //In questo caso è ok? controlla pthread_create 
+			return (void *) -1; //In questo caso è ok? controlla pthread_create 
+		
+		//fprintf(stderr, "scrivo sulla pipe: %d fd : %d\n", *((int*)args), fd);
+		write(*((int*)args), &fd, 2); //gestione errore scrittura su pipe 
+	
 	}
 	return (void *) 0; 
 }
@@ -268,86 +272,142 @@ void *submitTask(int descr){ //PRODUTTORE
 	pthread_mutex_unlock(&mutexCoda);
 	
 	return (void *) 0;
+	
 }
 
-static void run_server(struct sockaddr *sa){
+int aggiorna_max(int fd_max, fd_set set){
 	
-	int fd_skt, fd_c; 
+    for(int i = fd_max - 1; i >= 0; i--)
+        if (FD_ISSET(i, &set)) return i;
+ 
+    return -1;
+}
+
+int run_server(struct sockaddr_un *sa, int pipe){
+	
+	int fd_skt, fd_c, fd_r = 0;
 	int fd_num = 0; //si ricorda il max fd attivo 
     int	fd; //indice per select
 
-	//char buf[N]; 
-	
+
 	fd_set set; //fd attivi
 	fd_set rdset; //fd attesi in lettura 
 	
-	//int nread; //num caratteri letti
+    //inizializzazione socket 
 	
 	if((fd_skt = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){
 		perror("Errore nella socket");
 		return -1;
 	}
 	
-	if(bind(fd_skt, (struct sockaddr *) &sa, sizeof(sa)) == -1){
+	if(bind(fd_skt, (struct sockaddr *) sa, sizeof(*sa)) == -1){
 		perror("Errore nella bind");
 		return -1;
 	} 
-
 	listen(fd_skt, MAX_REQ); //fai gestire errore
+
+	//aggiorno fd_num e set 
 	
-	if(fd_skt < fd_num) //mi voglio ricordare l'indice max tra i descrittori attivi
+	if(fd_skt > fd_num) //mi voglio ricordare l'indice max tra i descrittori attivi
 		fd_num = fd_skt;
+		
+	if(pipe > fd_num)
+		fd_num = pipe;
 	
 	FD_ZERO(&set); //per evitare errori prima lo azzero
 	FD_SET(fd_skt, &set); //metto a 1 il bit di fd_skt, fd_skt pronto
 	
+	FD_SET(pipe, &set);
+	
+	
+	//inizio il ciclo di comunicazione con i workers 
+	
 	for(int i = 0; i < N; i++){ //qui ci va un while(1)
+		//fprintf(stderr, "ITERAZIONE: i: %d, pipe: %d, skt: %d, fd_num: %d, nuovo fd_r: %d \n", i, pipe, fd_skt, fd_num, fd_r);
 		
-		rdset = set; //preparo la maschera per la select, ne servono due perchè select modifica quello che gli passi
+		rdset = set; //aggiorno ogni volta la maschera per la select, ne servono due perchè select modifica quello che gli passi
 		
 		if(select(fd_num+1,	&rdset, NULL, NULL, NULL) == -1){ //si blocca finchè uno tra i descrittori in rdset non si blocca più su una read
 			perror("select");
 			return -1;
 		}
-		for(fd = 0; fd <= fd_num; fd++){ //guardo tutti i descrittori che select ha modificato in rdset
+		
+		//appena la select mi dice che c'è un worker pronto (descrittore client libero), inizio a scorrerli
+		
+		for(fd = 0; fd <= fd_num; fd++){ //guardo tutti i descrittori nel nuovo rdset (aggiornato da select)
+			
 			if(FD_ISSET(fd, &rdset)){ //controllo quali di questi è pronto in lettura
+			   // fprintf(stderr, "-----------fd: %d è pronto\n", fd);
+				
 				if(fd == fd_skt){ //se è il listen socket faccio accept 
+					//fprintf(stderr, "ho letto il SOCKET, faccio accept\n");
 					fd_c = accept(fd_skt, NULL, 0);
+				    //fprintf(stderr, "ACCEPT fatta, %d è il fd_c del client\n", fd_c);
+				   
 					FD_SET(fd_c, &set); //fd_c pronto
-					if(fd_c < fd_num) 
+					if(fd_c > fd_num) 
 						fd_num = fd_c;
-				}
-				else{ //altrimenti vado subito con la read
-					FD_CLR(fd, &set); //tolgo il fd da set 
-					submitTask(fd);
-					
-					/*nread = read(fd, buf, N);
-					if(nread == 0){ //client finito
-						FD_CLR(fd, &set); //tolgo il fd da set 
-						fd_num = aggiorna(&set);
-						close(fd);
 					}
-					else{
-						fprintf(err, "Server got: %s\n", buf);
-						write(fd, "Bye", 4);
-					}*/
+				else{ //(altrimenti vado con la read)
+				
+					if(fd == pipe){ //se è la pipe aggiorno i descrittori
+
+					//fprintf(stderr, "ho letto il fd: %d di PIPE, faccio read\n", fd);					
+						
+						if(read(pipe, &fd_r, 2) != -1){ //fd_r è di nuovo libero, aggiorno set e fd_num
+							FD_SET(fd_r, &set);
+							if(fd_r > fd_num) 
+								fd_num = fd_r;
+						}
+						else{
+							perror("READ PIPE MASTER: %d");
+							return -1;
+						}
+						//fprintf(stderr, "read su pipe fatta, ho letto fd_r: %d\n", fd_r);
+						
+					}
+					else{ //altrimenti eseguo il comando richiesto dal descrittore 
+						
+						//fprintf(stderr, "ho letto un descrittore client fd: %d, faccio SUBMIT\n", fd);
+						submitTask(fd);
+						FD_CLR(fd, &set); //tolgo il fd da set 
+						if(fd == fd_num) {
+							if((fd_num = aggiorna_max(fd, set)) == -1){
+								return -1; //???
+							}
+		
+						}
+						//devo chiudere fd? (close(fd));
+					}				
 					
-					
-					//MANCA LA PARTE DELLA PIPE 
 				}
 			}
 		}
 	}
+	
+	return 0;
 }
 	
-
+//nb: poi devi CHIUDERE la pipe 
 
 int main(){
 	
+	//Inizializzazione thread pool 
 	pthread_t th[THREAD_NUM];
 	
 	pthread_mutex_init(&mutexCoda, NULL);
 	pthread_cond_init(&condCoda, NULL);
+	
+	//inizializzazione pipe
+	
+	int pfd[2];
+	
+	if(pipe(pfd) == -1){
+		perror("creazione pipe");
+		return -1;
+	}
+	
+	//inizializzazione socket 
 	
 	struct sockaddr_un sa;
 	
@@ -355,25 +415,26 @@ int main(){
 	strncpy(sa.sun_path, SOCKNAME, UNIX_PATH_MAX);
 	sa.sun_family = AF_UNIX;
 	
+	//inizializzazione hash table 
+	
 	if((hash_table = icl_hash_create(NBUCKETS, hash_pjw, string_compare)) == NULL){
 		fprintf(stderr, "Errore nella creazione della hash table\n");
 		return -1;
 	}
 	
-	for(int i = 0; i < THREAD_NUM; i++){ //inizializzo pool di thread
-		if(pthread_create(&th[i], NULL, &init_thread, NULL) != 0){ //creo il thread che inizia ad eseguire init_thread
+	//creazione e avvio threadpool 
+	
+	for(int i = 0; i < THREAD_NUM; i++){
+		if(pthread_create(&th[i], NULL, &init_thread, (void *) &pfd[1]) != 0){ //creo il thread che inizia ad eseguire init_thread
 			perror("Err in creazione thread");
 			return -1;
 		}
 	}
+	//avvio server 
 	
-	run_server(&sa); 
-	
-	/*for(int i = 0; i < 10; i++){ //PRODUZIONE TASK, ci andrà la select poi 
-		//elm_coda t = { .x = 5 }; //produzione task 
-		int fd = i;
-		submitTask(fd); //sorta di enqueue 
-	}*/
+	run_server(&sa, pfd[0]); 
+
+   //join 
 	
 	for(int i = 0; i < THREAD_NUM; i++){ //quando terminano i thread? Quando faccio la exit? 
 		if(pthread_join(th[i], NULL) != 0){ //aspetto terminino tutti i thread (la join mi permette di liberare la memoria occupata dallo stack privato del thread)
@@ -381,6 +442,8 @@ int main(){
 			return -1;
 		}
 	}
+	
+	//eliminazione elm thread 
 	
 	pthread_mutex_destroy(&mutexCoda); //non so se vanno bene
 	pthread_cond_destroy(&condCoda);
@@ -834,6 +897,9 @@ int removeF(icl_hash_t *ht, char *path, int fd){ //controlla di aver liberato be
 	}
 	return 0;
 }
+
+
+//queste chiamate mi sa che non devono necessariamente aprire e chiudere il file 
 
 int readAF(icl_hash_t *ht, int fd, int seed){
     char *msg = malloc(MSG_SIZE*sizeof(char));	

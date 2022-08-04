@@ -98,8 +98,7 @@ int msg_sender(char *msg, int fd, char *cmd, const char *path, char *cnt){
 	if((num_w = write(fd, msg, MSG_SIZE)) == -1){
 		perror("Write del socket");
 		return -1;
-	}
-		  
+	}		  
 	else {
 		while(num_w < strlen(msg) + 1){
 			msg = msg + MSG_SIZE;
@@ -145,6 +144,8 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 		perror("Errore, Timeout sopraggiunto");
 		return -1;
 	}
+	fprintf(stderr, "%d è il fd_S dlato client\n", fd_s);
+				
 	
 	//connected = 1; //serve?
 	
@@ -608,7 +609,7 @@ int readNFile(int n, const char *dirname){  //su client hai funzione che salva f
 		
 		msg = malloc(MAX_SIZE*sizeof(char));
 		
-		if(n == 0){
+		if(n <= 0){
 			if(!errore && msg_sender(msg, fd_s, "readAllf", NULL, NULL) == -1){
 			fprintf(stderr, "Errore in invio messaggio al server\n");
 			errore = 1;
