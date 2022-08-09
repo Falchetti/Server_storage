@@ -5,6 +5,8 @@
 //#include <sys/socket.h>
 #include <unistd.h>
 
+int t; //controlla se va bene 
+
 
 int openConnection(const char* sockname, int msec, const struct timespec abstime);
 int closeConnection(const char *sockname);

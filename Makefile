@@ -50,4 +50,4 @@ test2 :
 	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
 	
 test :
-	./client -f /home/giulia/Server_storage/mysock -w dirw,3 -W sasuke,itachi -d savings -r sasuke -c sasuke,itachi  & ./server_mw 
+	./client -f /home/giulia/Server_storage/mysock -w dirw,3 -t 10 -W sasuke,itachi -t -1 -d savings -r sasuke -c sasuke,itachi  & ./server_mw -k config.txt

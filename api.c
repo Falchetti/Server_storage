@@ -95,6 +95,10 @@ int msg_sender(char *msg, int fd, char *cmd, const char *path, char *cnt){
 	}
 	strncat(msg, ";$", MAX_SIZE - strlen(msg) -1); //carattere finale 
 	
+	fprintf(stderr, "PRIMA: %s, t = %d\n", msg, t);
+	sleep(t); //è vero che ogni volta che scrivo al server gli sto facendo una richiesta
+	fprintf(stderr, "DOPO: %s\n", msg);
+	
 	if((num_w = write(fd, msg, MSG_SIZE)) == -1){
 		perror("Write del socket");
 		return -1;
@@ -138,14 +142,12 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 	
 	while ( (connect(fd_s, (struct sockaddr *) &sa, sizeof(sa)) == -1) && ((t = isTimeout(time, abstime)) == 0) )
 			sleep(msec/1000); //è attesa attiva? 
-			
+			//
 	if (t){
 		errno = ETIMEDOUT;
 		perror("Errore, Timeout sopraggiunto");
 		return -1;
-	}
-	fprintf(stderr, "%d è il fd_S dlato client\n", fd_s);
-				
+	}			
 	
 	//connected = 1; //serve?
 	
@@ -163,7 +165,7 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 	
 	return 0;
 }
-
+//bla v j
 //controllo se a è maggiore di b 
 int isTimeout(struct timespec a, struct timespec b){ 
     clock_gettime(CLOCK_REALTIME, &a);
@@ -217,6 +219,7 @@ int openFile(const char *pathname, int flags){ //per ora senza OR, ci dovrà ess
 	char *msg, *cmd;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
 	//int len; 
+	
 	
 	if(fd_s != -1){ //la connessione è aperta? IL SERVER CONTROLLA SE IL FILE E' GIA' APERTO
 	
@@ -471,12 +474,12 @@ int writeFile(const char *pathname, const char* dirname) {
    
         aux2 = aux;
         while (!feof(fp)){
-			fgets(aux2, MSG_SIZE, fp);;
+			fgets(aux2, MSG_SIZE, fp);
 			aux2 = aux2 + strlen(aux2);
 		}
 		
 		if(errno != 0){//va bene questo controllo? va bene come ho aggiornato il file?
-			perror("fscanf fallita\n");
+			perror("fgets fallita\n");
 			return -1;
 		}
 	

@@ -59,6 +59,8 @@ int main(int argc, char *argv[]){
 	size_t size;
 	FILE *fp;
 	char *aux;
+	
+	t = 0;
 
 	
 	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R::d:t:l:u:c:p")) != -1) && !found_h ){
@@ -349,8 +351,14 @@ int main(int argc, char *argv[]){
 				found_r = 0; //ogni volta che inserisco una nuova directory azzero found_r 
 				break;
 				
-			case 't' :
-				
+			case 't' : 
+				//fprintf(stderr, "----------------- t: %s------------------\n", optarg);
+				if(isNumber(optarg, &n) == 0 && n >= 0)
+					t = n;
+				else{
+					fprintf(stderr, "argomento di -t errato\n");
+					t = 0;
+				}
 				break;
 				
 			case 'l' :  
@@ -585,14 +593,14 @@ void lsR(const char *dir, int *err, int *n, int flag) {
 					*err = 1;
 					return;
 				}
-				fprintf(stderr, "proviamo %d\n", *n);
+				//fprintf(stderr, "proviamo %d\n", *n);
 				if(flag)
 					*n = *n - 1;
 			}
 		}
 		if (errno != 0) perror("readdir");
 		closedir(dp);
-		fprintf(stdout, "-----------------------\n");
+		//fprintf(stdout, "-----------------------\n");
 		}
 	}
 	return;

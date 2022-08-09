@@ -10,7 +10,7 @@
 #include "icl_hash.h"
 
 #define DEBUG
-//#undef DEBUG
+#undef DEBUG
 
 #define UNIX_PATH_MAX 108 //lunghezza massima path
 #define MSG_SIZE  130 //path + spazio comandi 
@@ -19,9 +19,13 @@
 
 #define SOCKNAME "/home/giulia/Server_storage/mysock" //in realtà lo leggo dal file di configurazione credo 
 #define NBUCKETS  256 // n. di buckets nella tabella hash, forse sempre legato alla config 
+#define THREAD_NUM 4
+#define LOGNAME "/home/giulia/Server_storage/log"
+
 #define MAX_REQ   20 //n. max di richieste in coda 
 #define N 60
-#define THREAD_NUM 4
+
+int dim;
 
 //ricordati di pensare alle lock su l'hashtable 
 
@@ -39,6 +43,7 @@ typedef struct file_info{
 
 
 void print_deb(icl_hash_t *ht);
+int isNumber(void *el, int *n);
 
 file_info *init_file(int lock_owner, int fd, int lst_op, char *contenuto);
 
@@ -390,10 +395,84 @@ int run_server(struct sockaddr_un *sa, int pipe){
 	
 //nb: poi devi CHIUDERE la pipe 
 
-int main(){
+int main(int argc, char *argv[]){
+	
+	char *socket, *log, *aux, *tmpstr, *token;
+	int n_workers, n;
+	FILE *fp;
+	
+	//valori di default
+	socket = SOCKNAME;
+	log = LOGNAME;
+	n_workers = THREAD_NUM;
+	dim = NBUCKETS;
+	
+	//parsing file di configurazione 
+	
+	if((getopt(argc, argv, "k:")) == 'k'){ 
+		if((fp = fopen(optarg, "r")) == NULL){
+			perror("errore nella fopen"); //devo controllare se va a buon fine SI
+            return -1;
+        }
+		aux = malloc(MAX_SIZE*sizeof(char));
+		
+        while (fgets(aux, MAX_SIZE, fp)){ //dovresti fare gestione errore di fgets
+			token = strtok_r(aux, ":", &tmpstr);
+			if(strcmp(token, "DIM") == 0){
+				token = strtok_r(NULL, ":", &tmpstr);
+				token[strlen(token) - 2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
+				if(isNumber(token, &n) == 0 && n > 0)
+					dim = n;
+				else{
+					fprintf(stderr, "errore in config file: dim value errato, verrà usato valore di default\n");
+					//return -1;
+				}
+			}
+			else if (strcmp(token, "NWORKERS") == 0){
+				token = strtok_r(NULL, ":", &tmpstr);
+				token[strlen(token) - 2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
+				if(isNumber(token, &n) == 0 && n > 0)
+					n_workers = n;
+				else{
+					fprintf(stderr, "errore in config file: nworkers value errato, verrà usato valore di default\n");
+					//return -1;
+				}
+			}
+			else if (strcmp(token, "SOCKET") == 0){
+				token = strtok_r(NULL, ":", &tmpstr);
+				if(token != NULL){
+					socket = malloc(UNIX_PATH_MAX*sizeof(char));
+					strcpy(socket, token); //usa quello con n 
+					socket[strlen(socket)-2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
+				}
+				else{
+					fprintf(stderr, "errore in config file: socket value errato, verrà usato valore di default\n");
+					//return -1;
+				}			
+			}
+			else if (strcmp(token, "LOG") == 0){
+				token = strtok_r(NULL, ":", &tmpstr);
+				if(token != NULL){
+					log = malloc(UNIX_PATH_MAX*sizeof(char));
+					strcpy(log, token); //usa quello con n 
+					log[strlen(socket)-2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
+				}
+				else{
+					fprintf(stderr, "errore in config file: log value errato, verrà usato valore di default\n");
+					//return -1;
+				}
+			}
+			else
+				fprintf(stderr, "formato config file errato\n");
+		}
+		
+		free(aux);
+		fclose(fp);
+		
+	}
 	
 	//Inizializzazione thread pool 
-	pthread_t th[THREAD_NUM];
+	pthread_t th[n_workers];
 	
 	pthread_mutex_init(&mutexCoda, NULL);
 	pthread_cond_init(&condCoda, NULL);
@@ -412,19 +491,20 @@ int main(){
 	struct sockaddr_un sa;
 	
 	memset(&sa, 0, sizeof(struct sockaddr_un));
-	strncpy(sa.sun_path, SOCKNAME, UNIX_PATH_MAX);
+	strncpy(sa.sun_path, socket, UNIX_PATH_MAX);
+
 	sa.sun_family = AF_UNIX;
 	
 	//inizializzazione hash table 
 	
-	if((hash_table = icl_hash_create(NBUCKETS, hash_pjw, string_compare)) == NULL){
+	if((hash_table = icl_hash_create(dim, hash_pjw, string_compare)) == NULL){
 		fprintf(stderr, "Errore nella creazione della hash table\n");
 		return -1;
 	}
 	
 	//creazione e avvio threadpool 
 	
-	for(int i = 0; i < THREAD_NUM; i++){
+	for(int i = 0; i < n_workers; i++){
 		if(pthread_create(&th[i], NULL, &init_thread, (void *) &pfd[1]) != 0){ //creo il thread che inizia ad eseguire init_thread
 			perror("Err in creazione thread");
 			return -1;
@@ -436,7 +516,7 @@ int main(){
 
    //join 
 	
-	for(int i = 0; i < THREAD_NUM; i++){ //quando terminano i thread? Quando faccio la exit? 
+	for(int i = 0; i < n_workers; i++){ //quando terminano i thread? Quando faccio la exit? 
 		if(pthread_join(th[i], NULL) != 0){ //aspetto terminino tutti i thread (la join mi permette di liberare la memoria occupata dallo stack privato del thread)
 			perror("Err in join thread");
 			return -1;
@@ -909,11 +989,11 @@ int readAF(icl_hash_t *ht, int fd, int seed){
 	int k;
 	int found = 0;
 	srand(seed); //da aggiustare 
-	int num = NBUCKETS;
+	int num = dim;
 	if (ht) {
 		file_info *aux;
 		while(!found && num > 0){
-			k = rand()%NBUCKETS; //così non è detto io li controlli tutti
+			k = rand()%dim; //così non è detto io li controlli tutti
 			for (entry = ht->buckets[k]; !found && entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
 				//openFL(key);
 				aux = icl_hash_find(ht, key);
@@ -1004,3 +1084,12 @@ int readAllF(icl_hash_t *ht, int fd){
 	return 0;			
 }
 
+int isNumber(void *el, int *n){
+	char *e = NULL;
+	errno = 0;
+	*n = strtol(el, &e, 10);
+	if(errno == ERANGE) return 2;
+	if(e != NULL && *e == (char) 0)
+		return 0; 
+	return 1;
+}
