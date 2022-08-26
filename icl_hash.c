@@ -43,7 +43,7 @@
 //**************************************************//
 
  #define SIZE_CNT 100 //rendi la taglia del contenuto coerente con il resto del codice
- 
+ #define MAX_SIZE 230
  
 
 typedef struct open_node{
@@ -55,7 +55,8 @@ typedef struct file_info{
 	int lock_owner;
 	open_node *open_owners; 
 	int lst_op; //controllo per la writeFile
-	char *cnt;
+	char cnt[MAX_SIZE];
+	int cnt_sz;
 } file_info;
 
 //**************************************************//
@@ -192,11 +193,11 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
 	((file_info *)curr->data)->open_owners->next = ((file_info *)data)->open_owners->next;
 	((file_info *)curr->data)->lst_op = ((file_info *)data)->lst_op;
 	if(((file_info *)data)->cnt != NULL){
-		((file_info *)curr->data)->cnt = malloc(SIZE_CNT*sizeof(char));
-		strcpy(((file_info *)curr->data)->cnt, ((file_info *)data)->cnt);
+		memcpy(((file_info *)curr->data)->cnt, ((file_info *)data)->cnt, ((file_info *)curr->data)->cnt_sz);
 	}
-	else 
-		((file_info *)curr->data)->cnt = NULL;
+	((file_info *)curr->data)->cnt_sz = ((file_info *)data)->cnt_sz;
+	
+	
 	
 	//curr->data = data;
 	

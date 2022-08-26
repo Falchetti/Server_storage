@@ -10,22 +10,22 @@
 #include "icl_hash.h"
 
 #define DEBUG
-#undef DEBUG
+//#undef DEBUG
 
 #define UNIX_PATH_MAX 108 //lunghezza massima path
-#define MSG_SIZE  130 //path + spazio comandi 
+#define MSG_SIZE  230 //path + spazio comandi 
 #define MAX_SIZE 230 //path, comandi, contenuto file
 #define CNT_SIZE 100
 
 #define SOCKNAME "/home/giulia/Server_storage/mysock" //in realtà lo leggo dal file di configurazione credo 
 #define NBUCKETS  256 // n. di buckets nella tabella hash, forse sempre legato alla config 
-#define THREAD_NUM 4
+#define THREAD_NUM 1
 #define LOGNAME "/home/giulia/Server_storage/log"
 
 #define MAX_REQ   20 //n. max di richieste in coda 
 #define N 60
 
-int dim;
+int dim; //è ok? 
 
 //ricordati di pensare alle lock su l'hashtable 
 
@@ -38,14 +38,15 @@ typedef struct file_info{
 	int lock_owner;
 	open_node *open_owners; 
 	int lst_op; //controllo per la writeFile
-	char *cnt;
+	char cnt[MAX_SIZE]; //era char *
+	int cnt_sz; //non c'era 
 } file_info;
 
 
 void print_deb(icl_hash_t *ht);
 int isNumber(void *el, int *n);
 
-file_info *init_file(int lock_owner, int fd, int lst_op, char *contenuto);
+file_info *init_file(int lock_owner, int fd, int lst_op, char *cnt, int sz);
 
 int insert_head(open_node **list, int info);
 int remove_elm(open_node **list, int info);
@@ -57,13 +58,12 @@ int openFO(icl_hash_t *ht, char *path, int fd);
 int openFCL(icl_hash_t *ht, char *path, int fd);
 int closeF(icl_hash_t *ht, char *path, int fd);
 int readF(icl_hash_t *ht, char *path, int fd);
-int writeF(icl_hash_t *ht, char *path, char *cnt, int fd);
+int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd);
 int lockF(icl_hash_t *ht, char *path, int fd);
 int unlockF(icl_hash_t *ht, char *path, int fd);
-int appendToF(icl_hash_t *ht, char *path, char *cnt, int fd);
+int appendToF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd);
 int removeF(icl_hash_t *ht, char *path, int fd);
-int readAF(icl_hash_t *ht, int fd, int seed);
-int readAllF(icl_hash_t *ht, int fd);
+int readNF(icl_hash_t *ht, int fd, int n);
 
 typedef struct elm_coda{
 	int fd;
@@ -113,7 +113,8 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 	
 	char *msg = malloc(MSG_SIZE*sizeof(char)); //controlla la malloc 
 	char *tmpstr, *token, *token2;
-	int seed = time(NULL); 
+	int seed = time(NULL);
+	int n;
 		
 	if(read(fd_c, msg, MSG_SIZE) == -1){
 		perror("read socket lato server");
@@ -125,7 +126,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 	#endif
 	
 	token = strtok_r(msg, ";", &tmpstr);
-	
+		
 	if(token != NULL){
 		
 		if(strcmp(token, "openfc") == 0){
@@ -171,10 +172,17 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 		else if(strcmp(token, "writef") == 0){
 			token = strtok_r(NULL, ";", &tmpstr);
 			token2 = strtok_r(NULL, ";", &tmpstr);
-			if(strcmp(token2, "$") == 0)
+			if(isNumber(token2, &n) == 0 && n > 0){
+				write(fd_c, "Ok", 3); //gestione errore 
+				if(read(fd_c, token2, n) == -1){
+					perror("read server su write client");
+					return -1;
+				}
+			}
+			else
 				token2 = NULL;
 				
-			if(writeF(hash_table, token, token2, fd_c) == -1){
+			if(writeF(hash_table, token, token2, n, fd_c) == -1){
 				return -1;
 			}			
 		}
@@ -193,10 +201,17 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 		else if(strcmp(token, "appendTof") == 0){
 			token = strtok_r(NULL, ";", &tmpstr);
 			token2 = strtok_r(NULL, ";", &tmpstr);
-			if(strcmp(token2, "$") == 0)
+			if(isNumber(token2, &n) == 0 && n > 0){
+				write(fd_c, "Ok", 3); //gestione errore 
+				if(read(fd_c, token2, n) == -1){
+					perror("read server su appendto client");
+					return -1;
+				}
+			}
+			else
 				token2 = NULL;
 				
-			if(appendToF(hash_table, token, token2, fd_c) == -1){
+			if(appendToF(hash_table, token, token2, n, fd_c) == -1){
 				return -1;
 			}			
 		}
@@ -206,17 +221,15 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				return -1;
 			}
 		}
-		else if(strcmp(token, "readAf") == 0){
-			if(readAF(hash_table, fd_c, seed) == -1){
-				return -1;
+		
+		else if(strcmp(token, "readNf") == 0){
+			token2 = strtok_r(NULL, ";", &tmpstr);
+			if(isNumber(token2, &n) == 0){
+				if(readNF(hash_table, fd_c, n) == -1)
+					return -1;
 			}
-			seed++;
 		}
-		else if(strcmp(token, "readAllf") == 0){
-			if(readAllF(hash_table, fd_c) == -1){
-				return -1;
-			}
-		}	
+
 		else{
 			fprintf(stderr, "Opzione non ancora implementata\n");
 			write(fd_c, "Ok", 3);
@@ -528,10 +541,13 @@ int main(int argc, char *argv[]){
 	pthread_mutex_destroy(&mutexCoda); //non so se vanno bene
 	pthread_cond_destroy(&condCoda);
 	
+	//assicurati tutte le connessioni siano chiuse sul socket prima diterminare
+	//finora chiudo la connessione quando ricevo il mess "disconnesso" dal client
+	
 	return 0;
 }
 
-file_info *init_file(int lock_owner, int fd, int lst_op, char *contenuto){
+file_info *init_file(int lock_owner, int fd, int lst_op, char *cnt, int sz){
 	file_info *tmp = malloc(sizeof(file_info)); 
 
 		
@@ -544,10 +560,8 @@ file_info *init_file(int lock_owner, int fd, int lst_op, char *contenuto){
 		tmp->lock_owner = lock_owner;
 	tmp->lst_op = lst_op;
 	
-	if(strcmp(contenuto, "0") != 0)
-		tmp->cnt = contenuto;
-	else 
-		tmp->cnt = NULL;
+	if(sz > 0)
+		memcpy(tmp->cnt, cnt, sz); //controlla 
 
 	return tmp;
 }
@@ -617,8 +631,11 @@ void print_deb(icl_hash_t *ht){
 			
 				print_list(aux->open_owners);
 					
-				if(aux->cnt != NULL)
-					fprintf(stderr, "contenuto: %s\n", aux->cnt);
+				if(aux->cnt != NULL){
+					fprintf(stderr, "cnt_sz: %d\n", aux->cnt_sz);						
+					fwrite(aux->cnt, aux->cnt_sz, 1, stderr);
+					fprintf(stderr, "\n");
+				}
 				else
 					fprintf(stderr, "contenuto: NULL\n");	
 			}
@@ -638,7 +655,7 @@ int openFC(icl_hash_t *ht, char *path, int fd){ //free(data)?
 		return -1;
 	}
 	else{
-		data = init_file(-1, fd, 0, "0"); 
+		data = init_file(-1, fd, 0, NULL, -1); 
 
 		if(icl_hash_insert(ht, path, data) == NULL){
 			fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
@@ -720,7 +737,7 @@ int openFCL(icl_hash_t *ht, char *path, int fd){
 			return -1;
 		} 
 		else{ 
-			data = init_file(fd, fd, 1, "0"); 
+			data = init_file(fd, fd, 1, NULL, -1); 
 		
 			if(icl_hash_insert(ht, path, data) == NULL){
 				fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
@@ -771,8 +788,8 @@ int closeF(icl_hash_t *ht, char *path, int fd){
 }
 
 int readF(icl_hash_t *ht, char *path, int fd){
-	file_info *tmp;	
-    char *msg = malloc(MSG_SIZE*sizeof(char));	
+	file_info *tmp;		
+    char str[MAX_SIZE/10 +2];
 	
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile leggere file non esistente\n");
@@ -791,23 +808,24 @@ int readF(icl_hash_t *ht, char *path, int fd){
 	}
 	else{
 		tmp->lst_op = 0;
-		strcpy(msg, "Ok"); //vedi se sovrascrive
-		if(tmp->cnt != NULL)
-			strcat(msg, tmp->cnt);
-		write(fd, msg, strlen(msg)+1); //ha senso il terzo parametro? 
+		//strcpy(msg, "Ok"); //vedi se sovrascrive
+		snprintf(str, MAX_SIZE/10 +2, "%d", tmp->cnt_sz);
+		write(fd, str, MSG_SIZE);
+		if(tmp->cnt_sz > 0)
+		   write(fd, tmp->cnt, tmp->cnt_sz); //ha senso il terzo parametro? 
 	}
 	
 	#ifdef DEBUG
 		fprintf(stderr,"---READ FILE \n");
 		print_deb(ht);
 	#endif
-	free(msg);
+	//free(msg);
 	
 	return 0;
 			
 }
 
-int writeF(icl_hash_t *ht, char *path, char *cnt, int fd){
+int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 	file_info *tmp;	
 	
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
@@ -832,9 +850,10 @@ int writeF(icl_hash_t *ht, char *path, char *cnt, int fd){
 	}
 	else{
 		if(cnt != NULL){
-			if(tmp->cnt == NULL)
-				tmp->cnt = malloc(MSG_SIZE*sizeof(char));
-			strcpy(tmp->cnt, cnt);
+			if(sz > 0){
+				memcpy(tmp->cnt, cnt, sz);
+			    tmp->cnt_sz = sz;
+			}
 		}
 		else
 			fprintf(stderr, "richiesta scrittura di file vuoto\n");
@@ -907,7 +926,7 @@ int unlockF(icl_hash_t *ht, char *path, int fd){
 	return 0;
 }
 
-int appendToF(icl_hash_t *ht, char *path, char *cnt, int fd){
+int appendToF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 	file_info *tmp;	
 
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
@@ -926,13 +945,13 @@ int appendToF(icl_hash_t *ht, char *path, char *cnt, int fd){
 			return -1;
 		}
 	else{
-		if(cnt != NULL)
-			if(tmp->cnt == NULL){
-				tmp->cnt = malloc(MSG_SIZE*sizeof(char));
-				strcpy(tmp->cnt, cnt);
+		if(cnt != NULL){
+			if(tmp->cnt_sz >= 0){
+				memcpy(tmp->cnt + tmp->cnt_sz, cnt, sz);
+				tmp->cnt_sz += sz;
 			}
-			else
-				strcat(tmp->cnt, cnt);
+			 
+	    }
 		else
 			fprintf(stderr, "richiesta scrittura di file vuoto\n");
 		
@@ -980,102 +999,81 @@ int removeF(icl_hash_t *ht, char *path, int fd){ //controlla di aver liberato be
 
 
 //queste chiamate mi sa che non devono necessariamente aprire e chiudere il file 
-
-int readAF(icl_hash_t *ht, int fd, int seed){
+int readNF(icl_hash_t *ht, int fd, int n){
     char *msg = malloc(MSG_SIZE*sizeof(char));	
 	    
 	icl_entry_t *entry;
 	char *key, *value;
+	//int go = 1;
 	int k;
-	int found = 0;
-	srand(seed); //da aggiustare 
-	int num = dim;
+	char str[MAX_SIZE/10+2]; //cambiare
+	int all = 0;
+	
+	if(n <= 0){
+		all = 1;
+		n = 1;
+	}
 	if (ht) {
 		file_info *aux;
-		while(!found && num > 0){
-			k = rand()%dim; //così non è detto io li controlli tutti
-			for (entry = ht->buckets[k]; !found && entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
+		for (k = 0; k < ht->nbuckets && n > 0; k++)  {
+			for (entry = ht->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL) && n > 0; entry = entry->next){
 				//openFL(key);
+				strncpy(msg, key, UNIX_PATH_MAX);
+				strncat(msg, ";", MSG_SIZE - strlen(msg) - 1);		
+				
 				aux = icl_hash_find(ht, key);
+				snprintf(str, MAX_SIZE/10+2, "%d", aux->cnt_sz);
+				strncat(msg, str, MSG_SIZE - strlen(msg) - 1);
+		
+				write(fd, msg, MSG_SIZE);
+				//fprintf(stderr, "write 1 server\n");
+			
+			
 				//closeF(key);
-				found = 1;
-				strcpy(msg, "Ok;"); //vedi se sovrascrive
-				strncat(msg, key, MSG_SIZE - strlen(msg) - 1);
 				if(aux != NULL){
-					if(aux->cnt != NULL){
-						strncat(msg, ";", MSG_SIZE - strlen(msg) - 1);
-						strncat(msg, aux->cnt, MSG_SIZE - strlen(msg) - 1);
+					if(aux->cnt_sz > 0){
+						if(read(fd, msg, MSG_SIZE) == -1){
+							perror("errore lettura");
+							free(msg);
+							return -1;
+						}
+						//fprintf(stderr, "read 1 server\n");
+						if(strncmp(msg, "Ok", 3) == 0){
+							write(fd, aux->cnt, aux->cnt_sz);
+							//fprintf(stderr, "write 2 server\n");
+			
+						}
 					}
+				}
+				else{
+					fprintf(stderr, "errore readNF ht\n");
+					return -1;
 				}
 				
-				write(fd, msg, strlen(msg)+1);
-			}
-			num--;
-		}
-	}
-	else{
-		fprintf(stderr, "hash table vuota\n");
-		write(fd, "Err", 4);
-	}
-		
-	
-	
-	#ifdef DEBUG
-		fprintf(stderr,"---SEND RANDOM FILE %s \n", msg);
-		print_deb(ht);
-	#endif
-	if(num == 0){
-		fprintf(stderr, "Nessun file trovato\n");
-		write(fd, "Err", 4);
-	}
-	free(msg);
-	
-	return 0;			
-}
-
-int readAllF(icl_hash_t *ht, int fd){
-    char *msg = malloc(MSG_SIZE*sizeof(char));	
-	    
-	icl_entry_t *entry;
-	char *key, *value;
-	int go = 1;
-	int k;
-	
-	if (ht) {
-		file_info *aux;
-		for (k = 0; k < ht->nbuckets && go; k++)  {
-			for (entry = ht->buckets[k]; go && entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
-				//openFL(key);
-				aux = icl_hash_find(ht, key);
-				//closeF(key);
-				strcpy(msg, "Ok;"); //vedi se sovrascrive
-				strncat(msg, key, MSG_SIZE - strlen(msg) - 1);
-				if(aux != NULL){
-					if(aux->cnt != NULL){
-						strncat(msg, ";", MSG_SIZE - strlen(msg) - 1);
-						strncat(msg, aux->cnt, MSG_SIZE - strlen(msg) - 1);
-					}
-				}
-				write(fd, msg, strlen(msg)+1);
-					
 				if(read(fd, msg, MSG_SIZE) == -1){
 					perror("errore lettura");
 					free(msg);
 					return -1;
 				}
-				if(strcmp(msg, "Ok") != 0)
-					go = 0;
+				//fprintf(stderr, "read 2 server\n");
+				if(strncmp(msg, "Ok", 3) != 0)
+					fprintf(stderr, "Errore in readNF mess risposta client\n");
+				if(!all)
+					n--;
+					
 			}
 		}
 	}
 	else{
 		fprintf(stderr, "hash table vuota\n");
-		write(fd, "Err", 4);
 	}
-	write(fd, "STOP", 5);	
+	write(fd, "$", 2);
+   // fprintf(stderr, "write 3 server\n");
+    	
+	
 	
 	#ifdef DEBUG
-		fprintf(stderr,"---SEND ALL FILES %s \n", msg);
+		fprintf(stderr,"---SEND N FILES\n");
 		print_deb(ht);
 	#endif
 	
@@ -1083,6 +1081,9 @@ int readAllF(icl_hash_t *ht, int fd){
 	
 	return 0;			
 }
+
+
+
 
 int isNumber(void *el, int *n){
 	char *e = NULL;
