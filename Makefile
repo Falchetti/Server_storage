@@ -4,7 +4,7 @@ CC = gcc
 CFLAGS = -Wall -pedantic 
 
 #TARGETS = server client clean test
-TARGETS = server_mw client clean test
+TARGETS = server_3 client clean test 
 
 #genera tutti gli eseguibili
 all	: $(TARGETS) 
@@ -13,8 +13,11 @@ all	: $(TARGETS)
 
 #server : server.o icl_hash.o 
 #	$(CC) $(CFLAGS) $^ -o $@
-
-server_mw : server_mw.o icl_hash.o 
+#server_mw : server_mw.o icl_hash.o 
+#	$(CC) $(CFLAGS) $^ -o $@ -lpthread
+#server_q : server_q.o icl_hash.o queue.o
+#	$(CC) $(CFLAGS) $^ -o $@ -lpthread
+server_3 : server_3.o icl_hash.o queue.o
 	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 
 #così se modifico solo icl_hash questo modulo oggetto non viene ricreato 
@@ -22,8 +25,15 @@ server_mw : server_mw.o icl_hash.o
 
 #server.o : server.c icl_hash.h 
 #	$(CC) $(CFLAGS) -c $< -o $@
-server_mw.o : server_mw.c icl_hash.h 
+#server_mw.o : server_mw.c icl_hash.h 
+#	$(CC) $(CFLAGS) -c $< -o $@ -lpthread
+#server_q.o : server_q.c icl_hash.h queue.h
+#	$(CC) $(CFLAGS) -c $< -o $@ -lpthread
+server_3.o : server_3.c icl_hash.h queue.h
 	$(CC) $(CFLAGS) -c $< -o $@ -lpthread
+	
+queue.o : queue.c queue.h
+	$(CC) $(CFLAGS) -c $< -o $@
 
 client : client.o api.o
 	$(CC) $(CFLAGS) $^ -o $@
@@ -36,6 +46,7 @@ icl_hash.o : icl_hash.c icl_hash.h
 	
 api.o : api.c api.h
 	$(CC) $(CFLAGS) -c $< -o $@
+	
 
 #phony target
 #lo fa all'inizio invece che alla fine, vedi come risolvere 
@@ -50,4 +61,4 @@ test2 :
 	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
 	
 test :
-	./client -f /home/giulia/Server_storage/mysock -W itachi -R -l itachi & ./server_mw -k config.txt
+	./client -f /home/giulia/Server_storage/mysock -W itachi,sasuke -R -l itachi & ./server_3 -k config.txt

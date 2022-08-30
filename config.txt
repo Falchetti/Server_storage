@@ -1,4 +1,5 @@
 DIM:256
+NFILES:20
 NWORKERS:4
 SOCKET:/home/giulia/Server_storage/mysock
 LOG:/home/giulia/Server_storage/log
