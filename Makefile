@@ -61,4 +61,4 @@ test2 :
 	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
 	
 test :
-	./client -f /home/giulia/Server_storage/mysock -W itachi,sasuke -R -l itachi & ./server_3 -k config.txt
+	./client -f /home/giulia/Server_storage/mysock -W itachi,sasuke,sasuke,sasuke -c pippo  & ./server_3 -k config.txt

@@ -102,7 +102,10 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 	}
 	
 	#ifdef DEBUG
-		fprintf(stderr, "\n*********Contenuto canale di comunicazione: %s*******\n\n", msg);
+		fprintf(stderr, "N_FILES: %d, ST_DIM: %d\n", n_files, st_dim);
+	
+    	fprintf(stderr, "\n*********Contenuto canale di comunicazione: %s*******\n\n", msg);
+	
 	#endif
 	
 	token = strtok_r(msg, ";", &tmpstr);
@@ -1165,7 +1168,7 @@ int readNF(icl_hash_t *ht, int fd, int n){
 		}
 		if(fileList_sender(list, fd) == -1){
 					return -1;
-				}
+		}
 	}
 	else{
 		fprintf(stderr, "hash table vuota\n");

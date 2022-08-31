@@ -173,11 +173,11 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
     /* if key was not found */
     curr = (icl_entry_t*)malloc(sizeof(icl_entry_t));
     if(!curr) return NULL;
-   
+    
    
    //**************************************************//
    //*******************MODIFICHE**********************//
-	//**************************************************//
+	/**************************************************
    
 	curr->key = malloc((strlen(key)+1)*sizeof(char)); //modificato
     strcpy(curr->key, key); //modificato, forse potrei usare strdup 
@@ -196,14 +196,12 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
 		memcpy(((file_info *)curr->data)->cnt, ((file_info *)data)->cnt, ((file_info *)curr->data)->cnt_sz);
 	}
 	((file_info *)curr->data)->cnt_sz = ((file_info *)data)->cnt_sz;
-	
-	
-	
-	//curr->data = data;
-	
-	//**************************************************//
+	//**************************************************/
 	//**************************************************// 
 	
+	curr->key = key;
+	curr->data = data;
+
     curr->next = ht->buckets[hash_val]; /* add at start */
 
     ht->buckets[hash_val] = curr;
@@ -276,6 +274,35 @@ icl_hash_update_insert(icl_hash_t *ht, void* key, void *data, void **olddata)
  * @returns 0 on success, -1 on failure.
  */
  
+ 
+ int icl_hash_delete(icl_hash_t *ht, void* key, void (*free_key)(void*), void (*free_data)(void*))
+{
+    icl_entry_t *curr, *prev;
+    unsigned int hash_val;
+
+    if(!ht || !key) return -1;
+    hash_val = (* ht->hash_function)(key) % ht->nbuckets;
+
+    prev = NULL;
+    for (curr=ht->buckets[hash_val]; curr != NULL; )  {
+        if ( ht->hash_key_compare(curr->key, key)) {
+            if (prev == NULL) {
+                ht->buckets[hash_val] = curr->next;
+            } else {
+                prev->next = curr->next;
+            }
+            if (*free_key && curr->key) (*free_key)(curr->key);
+            if (*free_data && curr->data) (*free_data)(curr->data);
+            ht->nentries++;
+            free(curr);
+            return 0;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+    return -1;
+}
+ /*
  //ho modificato la segnatura, potrei migliorarlo però
 int icl_hash_delete(icl_hash_t *ht, void* key) 
 {
@@ -321,7 +348,7 @@ int icl_hash_delete(icl_hash_t *ht, void* key)
         curr = curr->next;
     }
     return -1;
-}
+}*/
 
 /**
  * Free hash table structures (key and data are freed using functions).

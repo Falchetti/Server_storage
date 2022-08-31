@@ -47,6 +47,11 @@ typedef struct file_info{
 	int cnt_sz; //non c'era 
 } file_info;
 
+typedef struct file_entry_queue{
+	file_info *pnt;
+	char *path;
+} file_entry_queue;
+
 
 void print_deb(icl_hash_t *ht);
 int isNumber(void *el, int *n);
@@ -56,6 +61,7 @@ file_info *init_file(int lock_owner, int fd, int lst_op, char *cnt, int sz);
 int insert_head(open_node **list, int info);
 int remove_elm(open_node **list, int info);
 void print_list(open_node *list);
+int st_repl(int dim, void*list, int fd, char *path);
 
 int openFC(icl_hash_t *ht, char *path, int fd);
 int openFL(icl_hash_t *ht, char *path, int fd);
@@ -81,6 +87,7 @@ pthread_mutex_t mutexCoda;
 pthread_cond_t condCoda;*/
 
 Queue_t *task_queue;
+Queue_t *file_queue;
 
 icl_hash_t *hash_table = NULL;
 
@@ -98,6 +105,8 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 	}
 	
 	#ifdef DEBUG
+		fprintf(stderr, "len queue: %d", (int) length(file_queue));
+		fprintf(stderr, "N_FILES: %d, ST_DIM: %d\n", n_files, st_dim);
 		fprintf(stderr, "\n*********Contenuto canale di comunicazione: %s*******\n\n", msg);
 	#endif
 	
@@ -131,6 +140,18 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 		}
 		else if(strcmp(token, "disconnesso") == 0){//da chiudere i file e aggiornarli
 			close(fd_c); //non so se lo fa in automatico
+			#ifdef DEBUG
+				fprintf(stderr, "len queue: %d\n", (int) length(file_queue));
+				int n = length(file_queue);
+				for(int i = 0; i < n; i++){
+					file_entry_queue *tmp = pop(file_queue);
+					fprintf(stderr, "path: %s, sz_cnt: %d\n", tmp->path, tmp->pnt->cnt_sz); 
+					if(tmp->pnt->cnt_sz > 0){
+						fwrite(tmp->pnt->cnt, tmp->pnt->cnt_sz, 1, stdout);
+					}
+						
+				}
+			#endif
 			return -1;
 		}
 		else if(strcmp(token, "closef") == 0){
@@ -164,8 +185,13 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 		}
 		else if(strcmp(token, "lockf") == 0){
 			token = strtok_r(NULL, ";", &tmpstr);
-			if(lockF(hash_table, token, fd_c) == -1){
-				return -1;
+			int res = lockF(hash_table, token, fd_c);
+			switch(res){
+				case -1: write(fd_c, "Err:fileNonEsistente", 21); 
+					return -1;
+				case 0: write(fd_c, "Ok", 3);	
+					break;
+				default: fprintf(stderr, "Errore, return from lockF");
 			}
 		}
 		else if(strcmp(token, "unlockf") == 0){
@@ -500,6 +526,13 @@ int main(int argc, char *argv[]){
 		exit(errno); //controlla
     }
 	
+	//inizializzazione file_queue
+	file_queue = initQueue();
+    if (!file_queue) {
+		fprintf(stderr, "initQueue su file_q fallita\n");
+		exit(errno); //controlla
+    }
+	
 	//creazione e avvio threadpool 
 	for(int i = 0; i < n_workers; i++){
 		if(pthread_create(&th[i], NULL, &init_thread, (void *) &pfd[1]) != 0){ //creo il thread che inizia ad eseguire init_thread
@@ -523,7 +556,10 @@ int main(int argc, char *argv[]){
 	//pthread_cond_destroy(&condCoda);
 	//sostituiti con: 
 	//eliminazione task_queue  
+	
+	
 	deleteQueue(task_queue);
+	deleteQueue(file_queue);
 	
 	//assicurati tutte le connessioni siano chiuse sul socket prima diterminare
 	//finora chiudo la connessione quando ricevo il mess "disconnesso" dal client
@@ -608,6 +644,8 @@ void print_deb(icl_hash_t *ht){
 	
 	if (ht) {
 		file_info *aux;
+		
+				
 		for (k = 0; k < ht->nbuckets; k++)  {
 			for (entry = ht->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
 				aux = icl_hash_find(ht, key);
@@ -640,11 +678,22 @@ int openFC(icl_hash_t *ht, char *path, int fd){ //free(data)?
 	}
 	else{
 		data = init_file(-1, fd, 0, NULL, -1); 
+		if(st_repl(0, NULL, fd, path) == -1)
+				fprintf(stderr, "Errore in repl\n");
 
-		if(icl_hash_insert(ht, path, data) == NULL){
+		if(icl_hash_insert(ht, path, (void *) data) == NULL){
 			fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
 			write(fd, "Err:inserimento", 16);
 			return -1;
+		}
+		n_files++; //serve una lock
+		
+		file_entry_queue *qdata = malloc(sizeof(file_entry_queue));
+		qdata->pnt = data;
+		qdata->path = path;
+		if (push(file_queue, qdata) == -1) {
+			fprintf(stderr, "Errore: push\n");
+			pthread_exit(NULL); //controlla se va bene 
 		}
 		
 		write(fd, "Ok", 3);
@@ -723,13 +772,26 @@ int openFCL(icl_hash_t *ht, char *path, int fd){
 		else{ 
 			data = init_file(fd, fd, 1, NULL, -1); 
 		
+		    if(st_repl(0, NULL, fd, path) == -1)
+				fprintf(stderr, "Errore in repl\n");
 			if(icl_hash_insert(ht, path, data) == NULL){
 				fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
 				write(fd, "Err:inserimento", 16);
 				return -1;
-			}			
+			}	
+			fprintf(stderr, "LEN1:  %d\n",	length(file_queue));
+		
 			
 			write(fd, "Ok", 3);	
+			n_files++; //lock
+			file_entry_queue *qdata = malloc(sizeof(file_entry_queue));
+			qdata->pnt = data;
+			qdata->path = path;
+			if (push(file_queue, qdata) == -1) {
+				fprintf(stderr, "Errore: push\n");
+				pthread_exit(NULL); //controlla se va bene 
+			}
+			fprintf(stderr, "LEN2:  %d\n",	length(file_queue));
 		}
 		
 		#ifdef DEBUG
@@ -834,14 +896,22 @@ int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 	}
 	else{
 		if(cnt != NULL){
+			int res = st_repl(sz, NULL, fd, path);
+			if(res == -1)
+				fprintf(stderr, "Errore in repl su WriteFile\n");
+			if(res == -2){
+				write(fd, "Err:fileTroppoGrande", 21); 
+				return -1;
+			}
 			if(sz > 0){
 				memcpy(tmp->cnt, cnt, sz);
+				st_dim = st_dim - tmp->cnt_sz + sz; //lock 
 			    tmp->cnt_sz = sz;
 			}
 		}
 		else
 			fprintf(stderr, "richiesta scrittura di file vuoto\n");
-	    write(fd, "Ok", 3);
+		write(fd, "Ok", 3);
 	}
 	
 	#ifdef DEBUG
@@ -858,7 +928,6 @@ int lockF(icl_hash_t *ht, char *path, int fd){
 
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile fare lock su file non esistente\n");
-		write(fd, "Err:fileNonEsistente", 21); 
 		return -1;
 	}
 	
@@ -869,7 +938,6 @@ int lockF(icl_hash_t *ht, char *path, int fd){
 		}
 		tmp->lock_owner = fd;
 		tmp->lst_op = 0; //vedi se crea problemi alla openfile(O_create|o_lock)
-		write(fd, "Ok", 3);	
 	}
 	
 	#ifdef DEBUG
@@ -912,7 +980,7 @@ int unlockF(icl_hash_t *ht, char *path, int fd){
 
 int appendToF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 	file_info *tmp;	
-
+	int res;
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile scrivere su file non esistente\n");
 		write(fd, "Err:fileNonEsistente", 21); 
@@ -930,9 +998,18 @@ int appendToF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 		}
 	else{
 		if(cnt != NULL){
-			if(tmp->cnt_sz >= 0){
+			res = st_repl(sz, NULL, fd, path);
+			if(res == -1)
+				fprintf(stderr, "Errore in repl su AppendToFile\n");
+			if(res == -2){
+				write(fd, "Err:fileTroppoGrande", 21); 
+				return -1;
+			}
+			else if(tmp->cnt_sz > 0){ //prima era >= 
 				memcpy(tmp->cnt + tmp->cnt_sz, cnt, sz);
 				tmp->cnt_sz += sz;
+				st_dim +=sz; //lock
+				
 			}
 			 
 	    }
@@ -952,6 +1029,7 @@ int appendToF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 
 int removeF(icl_hash_t *ht, char *path, int fd){ //controlla di aver liberato bene la memoria
 	file_info *tmp;
+	int old_sz;
 	
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile rimuovere file non esistente\n");
@@ -964,11 +1042,42 @@ int removeF(icl_hash_t *ht, char *path, int fd){ //controlla di aver liberato be
 		return -1;
 	}
 	else{
-		if(icl_hash_delete(ht, path) == -1){
+		old_sz = tmp->cnt_sz;
+		
+		//aggiorno queue file
+		int len_q = length(file_queue);
+		file_entry_queue *aux[len_q];
+		file_entry_queue *del;
+		int j = 0;
+		int found = 0;
+		
+		for(int i = 0; i < len_q; i++){
+			del = pop(file_queue);			
+			//attenzione omonimi 
+			if(strncmp(del->path, path, UNIX_PATH_MAX) == 0){
+				free(del);
+				found = 1;
+			}
+			else{
+				aux[j] = del;
+				j++;
+			}
+		}
+		for(int i = 0; i < len_q-1; i++)
+			push(file_queue, aux[i]);
+		if(!found)
+			push(file_queue, aux[len_q]);
+		
+		
+		//NB: creare funz che liberano memoria!!
+		if(icl_hash_delete(ht, path, NULL, NULL) == -1){ 
 			fprintf(stderr, "Errore nella rimozione del file dallo storage\n");
 			write(fd, "Err:rimozione", 14);
 			return -1;
 		}
+		
+		n_files--; //lock
+		st_dim -= old_sz; //lock 
 		
 		
 		write(fd, "Ok", 3);
@@ -1065,6 +1174,115 @@ int readNF(icl_hash_t *ht, int fd, int n){
 	
 	return 0;			
 }
+
+int st_repl(int dim, void*list, int fd, char *path){
+	file_entry_queue *exp_file;
+	//file_node_list *tmp;
+	file_info *tmp;
+	int res = 0;
+	int old_sz;
+	fprintf(stderr, "n_files: %d, n_files_MAX: %d\n",n_files, n_files_MAX);
+	
+	if(length(file_queue) <= 0 || dim > st_dim_MAX){
+		fprintf(stderr, "Non è possibile rimpiazzare file\n");
+		return -2;
+    }
+	
+	if(n_files + 1 > n_files_MAX){
+		if((exp_file = pop(file_queue)) == NULL){
+			perror("OpenFC, pop");
+			return -1;
+		}
+
+		
+		fprintf(stderr, "FILE DA RIMUOVERE: %s, len_q: %d\n", exp_file->path, length(file_queue));
+		if(lockF(hash_table, exp_file->path, fd) == -1){
+			fprintf(stderr, "Errore in repl: lockF");
+			return -1;
+		}
+		/*if(list != NULL && (tmp = icl_hash_find(hash_table, exp_file->path)) != NULL){
+			insert_head_f(list, *tmp);
+			res = 1;
+		}*/
+        if(icl_hash_find(hash_table, exp_file->path) == NULL){ 
+			fprintf(stderr, "Impossibile rimuovere file non esistente\n");
+			return -1;
+		}
+		else if(exp_file->pnt->lock_owner != fd){
+			fprintf(stderr, "Impossibile rimuovere file senza lock\n");
+			return -1;
+		}
+		//ci pensa lui ad aggiornare st_dim e num_file	
+		else{
+			old_sz = exp_file->pnt->cnt_sz;
+			
+			//NB: creare funz che liberano memoria!!
+			if(icl_hash_delete(hash_table, exp_file->path, NULL, NULL) == -1){ 
+				fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
+				return -1;
+			}
+			
+			n_files--; //lock
+			st_dim = st_dim - old_sz; //lock 
+		}
+			
+	}
+	
+	while(st_dim + dim > st_dim_MAX && length(file_queue) > 0){
+		if((exp_file = pop(file_queue)) == NULL){
+			perror("OpenFC, pop");
+			return -1;
+		}
+		if(strncmp(exp_file->path, path, UNIX_PATH_MAX) == 0)
+			continue;
+		
+			
+		fprintf(stderr, "FILE DA RIMUOVERE: %s, len_q: %d\n", exp_file->path, length(file_queue));
+		
+		if(lockF(hash_table, exp_file->path, fd) == -1){
+			fprintf(stderr, "Errore in repl: lockF");
+			return -1;
+		}
+		/*if(list != NULL && (tmp = icl_hash_find(hash_table, exp_file->path)) != NULL){
+			insert_head_f(list, *tmp);
+			res = 1;
+		}*/
+		
+        //opiato parte di removeF per non riaggiornare la queue 	
+		
+	
+		/*if(icl_hash_find(hash_table, exp_file->path) == NULL){ 
+			fprintf(stderr, "Impossibile rimuovere file non esistente\n");
+			return -1;
+		}
+		else if(exp_file->pnt->lock_owner != fd){
+			fprintf(stderr, "Impossibile rimuovere file senza lock\n");
+			return -1;
+		}*/
+		else{
+			old_sz = exp_file->pnt->cnt_sz;
+			
+			//NB: creare funz che liberano memoria!!
+			if(icl_hash_delete(hash_table, exp_file->path, NULL, NULL) == -1){ 
+				fprintf(stderr, "Errore nella rimozione del file dallo storage, in repl\n");
+				return -1;
+			}
+			
+			n_files--; //lock
+			st_dim = st_dim - old_sz; //lock 
+			
+		}
+	}
+	fprintf(stderr, "LEN0: %d, st_dim: %d\n", length(file_queue), st_dim);
+		
+	if(st_dim + dim > st_dim_MAX){
+		fprintf(stderr, "Non è possibile rimpiazzare file\n");
+		return -2;
+    }
+		
+	return res;
+}
+
 
 
 

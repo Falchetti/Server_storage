@@ -81,8 +81,10 @@ int push(Queue_t *q, void *data) {
 }
 
 void *pop(Queue_t *q) {        
+
     if (q == NULL) { errno= EINVAL; return NULL;}
     LockQueue(q);
+	
     while(q->head == q->tail) {
 	UnlockQueueAndWait(q);
     }
@@ -95,6 +97,7 @@ void *pop(Queue_t *q) {
     assert(q->qlen>=0);
     UnlockQueue(q);
     freeNode(n);
+
     return data;
 } 
 // NOTA: in questa funzione si puo' accedere a q->qlen NON in mutua esclusione

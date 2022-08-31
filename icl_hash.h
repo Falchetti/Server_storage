@@ -44,8 +44,8 @@ int
 icl_hash_destroy(icl_hash_t *, void (*)(void*), void (*)(void*)),
     icl_hash_dump(FILE *, icl_hash_t *);
 
-//int icl_hash_delete( icl_hash_t *ht, void* key, void (*free_key)(void*), void (*free_data)(void*) );
-int icl_hash_delete( icl_hash_t *ht, void* key);
+int icl_hash_delete( icl_hash_t *ht, void* key, void (*free_key)(void*), void (*free_data)(void*) );
+//int icl_hash_delete( icl_hash_t *ht, void* key);
 
 /* simple hash function */
 unsigned int
