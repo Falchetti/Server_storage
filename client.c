@@ -277,7 +277,7 @@ int main(int argc, char *argv[]){
 				
 				break;
 				
-			case 'R' :  //per ora senza dirname, ATTUALMENTE NON FUNZIONA L'ARGOMENTO OPZIONALE
+			case 'R' :  
 				if(optarg != NULL){
 					//fprintf(stderr, "%s nbb\n", optarg);
 					if(isNumber(optarg, &n) != 0){
@@ -549,6 +549,8 @@ int write_file(char *file, char *D_removed){
 				perror("Errore in writeFile");
 				return -1;
 			}	
+			
+						
 		}
 		else {
 			perror("Errore in openFile");

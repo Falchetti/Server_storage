@@ -27,10 +27,7 @@
 #define MAX_REQ   20 //n. max di richieste in coda 
 #define N 60
 
-int st_dim; 
-int n_files;
-int st_dim_MAX;
-int n_files_MAX;
+
 
 //ricordati di pensare alle lock su l'hashtable 
 
@@ -38,6 +35,13 @@ typedef struct open_node{
     int fd;
     struct open_node *next;
 } open_node;
+
+typedef struct file_node{
+	char *path;
+	int cnt_sz;
+	char cnt[MAX_SIZE];
+	struct file_node *next;
+} file_node;
 
 typedef struct file_info{ 
 	int lock_owner;
@@ -55,13 +59,15 @@ typedef struct file_entry_queue{
 
 void print_deb(icl_hash_t *ht);
 int isNumber(void *el, int *n);
+int st_repl(int dim, int fd, char *path, file_node **list);
+int file_sender(file_node *list, int fd);
 
 file_info *init_file(int lock_owner, int fd, int lst_op, char *cnt, int sz);
 
 int insert_head(open_node **list, int info);
 int remove_elm(open_node **list, int info);
 void print_list(open_node *list);
-int st_repl(int dim, void*list, int fd, char *path);
+int insert_head_f(file_node **list, char *path, int sz_cnt, char *cnt); //potrei usare delle funz generiche
 
 int openFC(icl_hash_t *ht, char *path, int fd);
 int openFL(icl_hash_t *ht, char *path, int fd);
@@ -86,10 +92,17 @@ elm_coda *task_coda= NULL;
 pthread_mutex_t mutexCoda;
 pthread_cond_t condCoda;*/
 
+
+//variabili globali 
 Queue_t *task_queue;
 Queue_t *file_queue;
 
 icl_hash_t *hash_table = NULL;
+
+int st_dim; 
+int n_files;
+int st_dim_MAX;
+int n_files_MAX;
 
 
 int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo faccio chiamando la giusta funzione, rispondo al client, scrivo fd sulla pipe per il server  
@@ -105,8 +118,8 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 	}
 	
 	#ifdef DEBUG
-		fprintf(stderr, "len queue: %d", (int) length(file_queue));
-		fprintf(stderr, "N_FILES: %d, ST_DIM: %d\n", n_files, st_dim);
+		fprintf(stderr, "len queue: %d\n", (int) length(file_queue));
+		fprintf(stderr, "N_FILES: %d / %d, ST_DIM: %d / %d\n", n_files, n_files_MAX, st_dim, st_dim_MAX);
 		fprintf(stderr, "\n*********Contenuto canale di comunicazione: %s*******\n\n", msg);
 	#endif
 	
@@ -141,14 +154,16 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 		else if(strcmp(token, "disconnesso") == 0){//da chiudere i file e aggiornarli
 			close(fd_c); //non so se lo fa in automatico
 			#ifdef DEBUG
-				fprintf(stderr, "len queue: %d\n", (int) length(file_queue));
+				fprintf(stderr, "QUEUE INFO:\nlen: %d\nElm:\n", (int) length(file_queue));
 				int n = length(file_queue);
 				for(int i = 0; i < n; i++){
 					file_entry_queue *tmp = pop(file_queue);
-					fprintf(stderr, "path: %s, sz_cnt: %d\n", tmp->path, tmp->pnt->cnt_sz); 
+					fprintf(stderr, "path: %s, sz_cnt: %d\ncnt:\n", tmp->path, tmp->pnt->cnt_sz); 
 					if(tmp->pnt->cnt_sz > 0){
 						fwrite(tmp->pnt->cnt, tmp->pnt->cnt_sz, 1, stdout);
 					}
+					else
+						fprintf(stderr, "//\n");
 						
 				}
 			#endif
@@ -477,7 +492,7 @@ int main(int argc, char *argv[]){
 				}
 			}
 			else
-				fprintf(stderr, "formato config file errato, verranno usati valori di default\n");
+				fprintf(stderr, "formato config file errato, verranno usati valori di default sui dati mancanti\n");
 		}
 		
 		free(aux);
@@ -586,6 +601,21 @@ file_info *init_file(int lock_owner, int fd, int lst_op, char *cnt, int sz){
 	return tmp;
 }
 
+int insert_head_f(file_node **list, char *path, int cnt_sz, char *cnt){
+	
+	file_node *tmp = malloc(sizeof(file_node));
+	tmp->path = path;
+	tmp->cnt_sz = cnt_sz;
+   
+	if (cnt_sz > 0)
+		memcpy(tmp->cnt, cnt, cnt_sz);
+	
+	tmp->next = *list;
+	
+	*list = tmp;
+	
+	return 0;
+}
 int insert_head(open_node **list, int info){
 	open_node *tmp = malloc(sizeof(open_node));
 	tmp->fd = info;
@@ -678,7 +708,7 @@ int openFC(icl_hash_t *ht, char *path, int fd){ //free(data)?
 	}
 	else{
 		data = init_file(-1, fd, 0, NULL, -1); 
-		if(st_repl(0, NULL, fd, path) == -1)
+		if(st_repl(0, fd, path, NULL) == -1)
 				fprintf(stderr, "Errore in repl\n");
 
 		if(icl_hash_insert(ht, path, (void *) data) == NULL){
@@ -772,15 +802,15 @@ int openFCL(icl_hash_t *ht, char *path, int fd){
 		else{ 
 			data = init_file(fd, fd, 1, NULL, -1); 
 		
-		    if(st_repl(0, NULL, fd, path) == -1)
+		    if(st_repl(0, fd, path, NULL) == -1)
 				fprintf(stderr, "Errore in repl\n");
+			fprintf(stderr, "BBBBBBBBB\n");
 			if(icl_hash_insert(ht, path, data) == NULL){
 				fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
 				write(fd, "Err:inserimento", 16);
 				return -1;
 			}	
-			fprintf(stderr, "LEN1:  %d\n",	length(file_queue));
-		
+			
 			
 			write(fd, "Ok", 3);	
 			n_files++; //lock
@@ -791,7 +821,7 @@ int openFCL(icl_hash_t *ht, char *path, int fd){
 				fprintf(stderr, "Errore: push\n");
 				pthread_exit(NULL); //controlla se va bene 
 			}
-			fprintf(stderr, "LEN2:  %d\n",	length(file_queue));
+			
 		}
 		
 		#ifdef DEBUG
@@ -896,13 +926,35 @@ int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 	}
 	else{
 		if(cnt != NULL){
-			int res = st_repl(sz, NULL, fd, path);
+			file_node *list = NULL;
+
+			int res = st_repl(sz, fd, path, &list);
+			
 			if(res == -1)
 				fprintf(stderr, "Errore in repl su WriteFile\n");
 			if(res == -2){
-				write(fd, "Err:fileTroppoGrande", 21); 
-				return -1;
+				write(fd, "Err:fileTroppoGrande", 21);
+				return 0; //vedi poi come modificare dato che non vuoi interrompere la lettura per questo 
 			}
+			
+			#ifdef DEBUG
+				file_node *aux2 = list;
+				fprintf(stderr, "LISTA ESPULSI: ");
+				while(aux2 != NULL){
+					fprintf(stderr, "%s -> ", aux2->path);
+					aux2 = aux2->next;
+				}
+				fprintf(stderr, "//\n");
+			#endif
+			file_node *aux = list;
+				
+			while(aux != NULL){
+				file_sender(aux, fd);
+				aux = aux->next;
+			}
+            
+			//dovrò liberarla questa lista 
+			
 			if(sz > 0){
 				memcpy(tmp->cnt, cnt, sz);
 				st_dim = st_dim - tmp->cnt_sz + sz; //lock 
@@ -911,7 +963,14 @@ int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 		}
 		else
 			fprintf(stderr, "richiesta scrittura di file vuoto\n");
+		write(fd, "$", 2);
+	//	fprintf(stderr, "write server: $\n");
+		char *msg = malloc(MSG_SIZE*sizeof(char));
+		read(fd, msg, MSG_SIZE);
+	//	fprintf(stderr, "read server dopo $: %s\n", msg);
+		
 		write(fd, "Ok", 3);
+		//fprintf(stderr, "write server: OK\n");
 	}
 	
 	#ifdef DEBUG
@@ -998,19 +1057,40 @@ int appendToF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 		}
 	else{
 		if(cnt != NULL){
-			res = st_repl(sz, NULL, fd, path);
+			file_node *list = NULL;
+			res = st_repl(sz, fd, path, &list);
+			
+				
 			if(res == -1)
 				fprintf(stderr, "Errore in repl su AppendToFile\n");
-			if(res == -2){
+			else if(res == -2){
 				write(fd, "Err:fileTroppoGrande", 21); 
 				return -1;
 			}
-			else if(tmp->cnt_sz > 0){ //prima era >= 
+			else{
+				#ifdef DEBUG
+					file_node *aux2 = list;
+					fprintf(stderr, "LISTA ESPULSI: ");
+					while(aux2 != NULL){
+						fprintf(stderr, "%s -> ", aux2->path);
+						aux2 = aux2->next;
+					}
+					fprintf(stderr, "NULL\n");
+				#endif
+				file_node *aux = list;
+				while(aux != NULL){
+					file_sender(aux, fd);
+					aux = aux->next;
+				}
+				write(fd, "$", 2);
+			}
+			if(tmp->cnt_sz > 0){ //prima era >= 
 				memcpy(tmp->cnt + tmp->cnt_sz, cnt, sz);
 				tmp->cnt_sz += sz;
 				st_dim +=sz; //lock
-				
 			}
+				
+			
 			 
 	    }
 		else
@@ -1093,14 +1173,13 @@ int removeF(icl_hash_t *ht, char *path, int fd){ //controlla di aver liberato be
 
 //queste chiamate mi sa che non devono necessariamente aprire e chiudere il file 
 int readNF(icl_hash_t *ht, int fd, int n){
-    char *msg = malloc(MSG_SIZE*sizeof(char));	
 	    
 	icl_entry_t *entry;
 	char *key, *value;
-	//int go = 1;
 	int k;
-	char str[MAX_SIZE/10+2]; //cambiare
 	int all = 0;
+	file_node *file;
+	
 	
 	if(n <= 0){
 		all = 1;
@@ -1111,46 +1190,14 @@ int readNF(icl_hash_t *ht, int fd, int n){
 		for (k = 0; k < ht->nbuckets && n > 0; k++)  {
 			for (entry = ht->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL) && n > 0; entry = entry->next){
 				//openFL(key);
-				strncpy(msg, key, UNIX_PATH_MAX);
-				strncat(msg, ";", MSG_SIZE - strlen(msg) - 1);		
-				
 				aux = icl_hash_find(ht, key);
-				snprintf(str, MAX_SIZE/10+2, "%d", aux->cnt_sz);
-				strncat(msg, str, MSG_SIZE - strlen(msg) - 1);
-		
-				write(fd, msg, MSG_SIZE);
-				//fprintf(stderr, "write 1 server\n");
-			
-			
-				//closeF(key);
-				if(aux != NULL){
-					if(aux->cnt_sz > 0){
-						if(read(fd, msg, MSG_SIZE) == -1){
-							perror("errore lettura");
-							free(msg);
-							return -1;
-						}
-						//fprintf(stderr, "read 1 server\n");
-						if(strncmp(msg, "Ok", 3) == 0){
-							write(fd, aux->cnt, aux->cnt_sz);
-							//fprintf(stderr, "write 2 server\n");
-			
-						}
-					}
-				}
-				else{
-					fprintf(stderr, "errore readNF ht\n");
-					return -1;
-				}
+				file = malloc(sizeof(file_node));
+				file->path = key;
+				file->cnt_sz = aux->cnt_sz;
+				memcpy(file->cnt, aux->cnt, file->cnt_sz);
 				
-				if(read(fd, msg, MSG_SIZE) == -1){
-					perror("errore lettura");
-					free(msg);
-					return -1;
-				}
-				//fprintf(stderr, "read 2 server\n");
-				if(strncmp(msg, "Ok", 3) != 0)
-					fprintf(stderr, "Errore in readNF mess risposta client\n");
+				file_sender(file, fd);//controlla risultato 
+				
 				if(!all)
 					n--;
 					
@@ -1160,9 +1207,16 @@ int readNF(icl_hash_t *ht, int fd, int n){
 	else{
 		fprintf(stderr, "hash table vuota\n");
 	}
+    
 	write(fd, "$", 2);
    // fprintf(stderr, "write 3 server\n");
-    	
+    char *msg = malloc(MSG_SIZE*sizeof(char));
+	read(fd, msg, MSG_SIZE);
+	//	fprintf(stderr, "read server dopo $: %s\n", msg);
+		
+	write(fd, "Ok", 3);
+	//fprintf(stderr, "write server: OK\n");
+	
 	
 	
 	#ifdef DEBUG
@@ -1170,21 +1224,18 @@ int readNF(icl_hash_t *ht, int fd, int n){
 		print_deb(ht);
 	#endif
 	
-	free(msg);
 	
 	return 0;			
 }
 
-int st_repl(int dim, void*list, int fd, char *path){
+int st_repl(int dim, int fd, char *path, file_node **list){
 	file_entry_queue *exp_file;
-	//file_node_list *tmp;
-	file_info *tmp;
+	
 	int res = 0;
 	int old_sz;
-	fprintf(stderr, "n_files: %d, n_files_MAX: %d\n",n_files, n_files_MAX);
 	
-	if(length(file_queue) <= 0 || dim > st_dim_MAX){
-		fprintf(stderr, "Non è possibile rimpiazzare file\n");
+	if(dim > st_dim_MAX || st_dim_MAX == 0){
+		fprintf(stderr, "Non è possibile rimpiazzare file, %d > %d\n", dim, st_dim_MAX);
 		return -2;
     }
 	
@@ -1195,36 +1246,40 @@ int st_repl(int dim, void*list, int fd, char *path){
 		}
 
 		
-		fprintf(stderr, "FILE DA RIMUOVERE: %s, len_q: %d\n", exp_file->path, length(file_queue));
+		fprintf(stderr, "FILE DA RIMUOVERE: %s, len_q: %ld\n", exp_file->path, length(file_queue));
 		if(lockF(hash_table, exp_file->path, fd) == -1){
 			fprintf(stderr, "Errore in repl: lockF");
 			return -1;
 		}
-		/*if(list != NULL && (tmp = icl_hash_find(hash_table, exp_file->path)) != NULL){
-			insert_head_f(list, *tmp);
-			res = 1;
-		}*/
-        if(icl_hash_find(hash_table, exp_file->path) == NULL){ 
+		
+		
+        /*if(icl_hash_find(hash_table, exp_file->path) == NULL){ 
 			fprintf(stderr, "Impossibile rimuovere file non esistente\n");
 			return -1;
 		}
 		else if(exp_file->pnt->lock_owner != fd){
 			fprintf(stderr, "Impossibile rimuovere file senza lock\n");
 			return -1;
-		}
+		}*/
 		//ci pensa lui ad aggiornare st_dim e num_file	
-		else{
-			old_sz = exp_file->pnt->cnt_sz;
-			
-			//NB: creare funz che liberano memoria!!
-			if(icl_hash_delete(hash_table, exp_file->path, NULL, NULL) == -1){ 
-				fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
-				return -1;
-			}
-			
-			n_files--; //lock
-			st_dim = st_dim - old_sz; //lock 
+		
+		old_sz = exp_file->pnt->cnt_sz;
+		
+		
+		if(list != NULL)
+			insert_head_f(list, exp_file->path, old_sz, exp_file->pnt->cnt);
+		
+		//NB: creare funz che liberano memoria!!
+		if(icl_hash_delete(hash_table, exp_file->path, NULL, NULL) == -1){ 
+			fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
+			return -1;
 		}
+		
+		n_files--; //lock
+		st_dim = st_dim - old_sz; //lock 
+		fprintf(stderr, "n_files: %d, st_dim: %d\n", n_files, st_dim);
+		
+		
 			
 	}
 	
@@ -1237,18 +1292,13 @@ int st_repl(int dim, void*list, int fd, char *path){
 			continue;
 		
 			
-		fprintf(stderr, "FILE DA RIMUOVERE: %s, len_q: %d\n", exp_file->path, length(file_queue));
+		fprintf(stderr, "FILE DA RIMUOVERE: %s, len_q: %ld\n", exp_file->path, length(file_queue));
 		
 		if(lockF(hash_table, exp_file->path, fd) == -1){
 			fprintf(stderr, "Errore in repl: lockF");
 			return -1;
 		}
-		/*if(list != NULL && (tmp = icl_hash_find(hash_table, exp_file->path)) != NULL){
-			insert_head_f(list, *tmp);
-			res = 1;
-		}*/
-		
-        //opiato parte di removeF per non riaggiornare la queue 	
+        //copiato parte di removeF per non riaggiornare la queue 	
 		
 	
 		/*if(icl_hash_find(hash_table, exp_file->path) == NULL){ 
@@ -1259,21 +1309,20 @@ int st_repl(int dim, void*list, int fd, char *path){
 			fprintf(stderr, "Impossibile rimuovere file senza lock\n");
 			return -1;
 		}*/
-		else{
-			old_sz = exp_file->pnt->cnt_sz;
-			
-			//NB: creare funz che liberano memoria!!
-			if(icl_hash_delete(hash_table, exp_file->path, NULL, NULL) == -1){ 
-				fprintf(stderr, "Errore nella rimozione del file dallo storage, in repl\n");
-				return -1;
-			}
-			
-			n_files--; //lock
-			st_dim = st_dim - old_sz; //lock 
-			
+		old_sz = exp_file->pnt->cnt_sz;
+		if(list != NULL)
+			insert_head_f(list, exp_file->path, old_sz, exp_file->pnt->cnt);
+		
+		//NB: creare funz che liberano memoria!!
+		if(icl_hash_delete(hash_table, exp_file->path, NULL, NULL) == -1){ 
+			fprintf(stderr, "Errore nella rimozione del file dallo storage, in repl\n");
+			return -1;
 		}
+		
+		n_files--; //lock
+		st_dim = st_dim - old_sz; //lock 
+	
 	}
-	fprintf(stderr, "LEN0: %d, st_dim: %d\n", length(file_queue), st_dim);
 		
 	if(st_dim + dim > st_dim_MAX){
 		fprintf(stderr, "Non è possibile rimpiazzare file\n");
@@ -1281,6 +1330,45 @@ int st_repl(int dim, void*list, int fd, char *path){
     }
 		
 	return res;
+}
+
+int file_sender(file_node *file, int fd){
+		
+	//considera opzione file null
+	char *msg = malloc(MSG_SIZE*sizeof(char));	
+	char str[MAX_SIZE/10+2]; //cambiare
+	
+	strncpy(msg, file->path, UNIX_PATH_MAX);
+	strncat(msg, ";", MSG_SIZE - strlen(msg) - 1);
+	snprintf(str, MAX_SIZE/10+2, "%d", file->cnt_sz);
+	strncat(msg, str, MSG_SIZE - strlen(msg) - 1);
+
+	write(fd, msg, MSG_SIZE);
+	//fprintf(stderr, "write path;sz server: %s\n", msg);
+	if(file->cnt_sz > 0){
+		if(read(fd, msg, MSG_SIZE) == -1){
+			perror("errore lettura");
+			free(msg);
+			return -1;
+		}
+		//fprintf(stderr, "read (cnt_sz > 0) server: %s\n", msg);
+		if(strncmp(msg, "Ok", 3) == 0){
+			write(fd, file->cnt, file->cnt_sz);
+			//fprintf(stderr, "write cnt server\n");
+		}
+	}
+
+
+	if(read(fd, msg, MSG_SIZE) == -1){
+		perror("errore lettura");
+		free(msg);
+		return -1;
+	}
+	//fprintf(stderr, "read dopo path;sz o cnt server: %s\n", msg);
+	if(strncmp(msg, "Ok", 3) != 0)
+		fprintf(stderr, "Errore in fileFile sender mess risposta client\n");	
+
+	return 0;
 }
 
 
