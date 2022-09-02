@@ -4,7 +4,7 @@ CC = gcc
 CFLAGS = -Wall -pedantic 
 
 #TARGETS = server client clean test
-TARGETS = server_3 client clean test 
+TARGETS = server_4s client clean test 
 
 #genera tutti gli eseguibili
 all	: $(TARGETS) 
@@ -17,7 +17,7 @@ all	: $(TARGETS)
 #	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 #server_q : server_q.o icl_hash.o queue.o
 #	$(CC) $(CFLAGS) $^ -o $@ -lpthread
-server_3 : server_3.o icl_hash.o queue.o
+server_4s : server_4s.o icl_hash.o queue.o
 	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 
 #così se modifico solo icl_hash questo modulo oggetto non viene ricreato 
@@ -29,7 +29,7 @@ server_3 : server_3.o icl_hash.o queue.o
 #	$(CC) $(CFLAGS) -c $< -o $@ -lpthread
 #server_q.o : server_q.c icl_hash.h queue.h
 #	$(CC) $(CFLAGS) -c $< -o $@ -lpthread
-server_3.o : server_3.c icl_hash.h queue.h
+server_4s.o : server_4s.c icl_hash.h queue.h
 	$(CC) $(CFLAGS) -c $< -o $@ -lpthread
 	
 queue.o : queue.c queue.h
@@ -61,4 +61,4 @@ test2 :
 	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
 	
 test :
-	./client -f /home/giulia/Server_storage/mysock -D exp -w dirw -d savings -R  & ./server_3 -k config.txt
+	./client -f /home/giulia/Server_storage/mysock -D exp -w dirw -d savings -R  & ./server_4s -k config.txt

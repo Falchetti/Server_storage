@@ -433,13 +433,13 @@ int writeFile(const char *pathname, const char* dirname) {
 			
 
 		k = file_receiver(dirname, fd_s); 
-		fprintf(stderr, "k = %d\n", k);
+		
 		if(k == -1)
 			return 0; //vedi come gestirlo 
 	   
 		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
 			perror("read socket lato client");
-			errore = 1; //ok?
+			errore = 1; //ok???
 	    }
 		//fprintf(stderr, "read client finale: %s\n", msg);
 	
@@ -483,6 +483,9 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char* dirna
 		}
 		
 		k = file_receiver(dirname, fd_s); 
+		
+		if(k == -1)
+			return 0; //vedi come gestirlo 
 		
 		if(!errore && read(fd_s, msg, MSG_SIZE) == -1){
 			perror("read socket lato client");
