@@ -12,7 +12,7 @@
 #include "queue.h"
 
 #define DEBUG
-//#undef DEBUG
+#undef DEBUG
 
 #define UNIX_PATH_MAX 108 //lunghezza massima path
 #define MSG_SIZE  230 //path + spazio comandi 
@@ -312,7 +312,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 
 void *init_thread(void *args){ //CONSUMATORE
 	int res;
-	
+	fprintf(stderr, "sono nato %lu\n", pthread_self());
 	while(1){
 		
 		

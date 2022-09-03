@@ -53,13 +53,14 @@ tempo di attesa tra due richieste.
 
 //QUANDO CHIUDO IL CLIENT (vari return -1) ricordati di fare pulizia (free varie) , di disconnettere la comunicazione (e i file aperti??)
 
-void lsR(const char *dir, int *err, int *n, int flag, char *D_removed);
+void lsR(const char *dir, int *err, int *n, int flag, char *D_removed, int found_p);
 int isdot(const char dir[]);
-int write_file(char *file, char *D_removed);
+int write_file(char *file, char *D_removed, int found_p);
+void print_p(char *op, char *file[], int n_files, int esito, int rB, int wB);
 
 int main(int argc, char *argv[]){
 	
-	int flag, n;
+	int flag, n, res;
 	//int t = 0;
 	
 	char *d_read = NULL;
@@ -77,7 +78,7 @@ int main(int argc, char *argv[]){
 	
 	struct timespec ts = {0};
 
-	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R::d:t:l:u:c:p")) != -1) && !found_h ){ //fai controllo su getopt per la questione R arg opzionale
+	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:p")) != -1) && !found_h ){ //fai controllo su getopt per la questione R arg opzionale
 		
 		#ifdef DEBUG2
 			printf("t_requests = %d, found_r = %d, found_w = %d, found_p = %d\n", t_requests, found_r, found_w, found_p);
@@ -99,6 +100,8 @@ int main(int argc, char *argv[]){
 			case 'h' :
 				
 				found_h = 1; //assicurati che così termini subito, guarda se anche in fondo la gestione (cleanup) va bene
+				if(found_p)
+					print_p("Usage message", NULL, 0, 1, -1, -1);
 				break;
 				
 			case 'f' : //quando ricevo il nome del socket (e solo in quel momento) apro la connessione 
@@ -112,7 +115,11 @@ int main(int argc, char *argv[]){
 					
                     // tentativo di connessione, provo per un minuto facendo 1 tentativo al secondo
                     // questa scelta la metto direttamente nelle #define o devo usare un file di config?? 					
-					if(openConnection(socket_name, MSEC_TENT, timeout) == -1){
+					res = openConnection(socket_name, MSEC_TENT, timeout);
+					
+					if(found_p)
+						print_p("Specifica nome del socket", &optarg, 1, res, -1, -1);
+					if(res == -1){	
 						perror("Errore in openConnection"); 
 						exit(errno); //vedi se va bene l'uso di exit
 					}
@@ -156,10 +163,10 @@ int main(int argc, char *argv[]){
 					
 					if(token == NULL || n == 0){
 						n = 1;
-					    lsR(dir, &err, &n, 0, D_removed);
+					    lsR(dir, &err, &n, 0, D_removed, found_p);
 					}
 					else
-						lsR(dir, &err, &n, 1, D_removed);
+						lsR(dir, &err, &n, 1, D_removed, found_p);
 					
 					if(err != 0){
 						fprintf(stderr, "errore ricorsione directory\n");
@@ -202,7 +209,7 @@ int main(int argc, char *argv[]){
 					 
 					token = strtok_r(optarg, ",", &tmpstr); 
 					while (token) {
-						if(write_file(token, D_removed) == -1){
+						if(write_file(token, D_removed, found_p) == -1){
 							fprintf(stderr, "Errore  nella scrittura dei file richiesti\n");
 							return -1;
 						}
@@ -220,6 +227,9 @@ int main(int argc, char *argv[]){
 			case 'D' :
 			
 				D_removed = optarg;
+				if(found_p)
+					print_p("Specifica cartella file espulsi", &optarg, 1, 1, -1, -1);
+				
 				found_w = 0; //ogni volta che inserisco una nuova directory azzero found_w, perchè a lei deve necessariamente SEGUIRE il flag w 
 				
 				break;
@@ -240,7 +250,12 @@ int main(int argc, char *argv[]){
 						buff = malloc(SZ_STRING*sizeof(char));
 						size = (size_t) SZ_STRING; //forse non è il corretto utilizzo, il punto è salvarci dentro la vera size 
 						
-						if(readFile(token,  (void *) &buff, &size) == -1){
+						res = readFile(token,  (void *) &buff, &size);
+						
+						if(found_p)
+							print_p("Read file", &token, 1, res, size, -1);
+						
+						if(res == -1){
 							perror("Errore in readFile");
 							return -1;
 						} 
@@ -251,6 +266,8 @@ int main(int argc, char *argv[]){
 							else
 								fprintf(stderr, "FILE LETTO: %s\n", (char *) buff);
 						#endif
+						
+						
 						
      					if(d_read != NULL)
 							if(save_file(d_read, token, buff, size) == -1){
@@ -277,65 +294,56 @@ int main(int argc, char *argv[]){
 				
 				break;
 				
-			case 'R' :  
+			case 'R' :  //non riesco a farlo funzionare con argomento opzionale (problema bash credo, non posso usare la forma :R::, guarda sulla virtual machine se va )
 				if(optarg != NULL){
-					//fprintf(stderr, "%s nbb\n", optarg);
 					if(isNumber(optarg, &n) != 0){
 						fprintf(stderr,"L'argomento di R deve essere un numero\n");
 						return -1;
-					}/*
-					else if(n > 0){
-						if(readNFile(n, d_read) == -1){
-							perror("Errore in readFile");
-							return -1;
-						} 
-					}
-					else if(n == 0) { 
-						if(readNFile(0, d_read) == -1){
-							perror("Errore in readFile");
-							return -1;
-						} 
-					}
-					else{
-						perror("l'argomento di R deve essere un numero positivo");
-						return -1;
-					}
-				}
-				else{
-					if(readNFile(2, d_read) == -1){ //METTI 0 POI
-						perror("Errore in readFile");
-						return -1;
-					} 
-				}*/
+					}	
 	            }
 				else 
 					n = 0;
-				if((n = readNFile(n, d_read)) == -1){
-					perror("Errore in readNFiles");
-					return -1;
-				} 
-				fprintf(stderr, "Letti %d file\n", n);
+				res = readNFile(n, d_read);
+				if(res == -1)
+					perror("Errore in readNFiles");  //ho tolto il return -1
 				
+				if(found_p){
+					if(res != -1)
+						if(n == 0)
+							fprintf(stderr, "Tipo di operazione: Lettura %d file, File effettivamente letti: %d, Esito: SUCCESS\n", res, res);
+						else
+							fprintf(stderr, "Tipo di operazione: Lettura %d file, File effettivamente letti: %d, Esito: SUCCESS\n", n, res);
+					
+					else 
+						fprintf(stderr, "Tipo di operazione: Lettura %d file, Esito: FAIL\n", n);
+				}
+
 				found_r = 1;
 				
 				break;
 			
 			case 'd' :
 				d_read = optarg;
+				if(found_p)
+						print_p("Specifica cartella file letti", &optarg, 1, 0, -1, -1);
 				found_r = 0; //ogni volta che inserisco una nuova directory azzero found_r 
 				break;
 				
 			case 't' : 
 				//fprintf(stderr, "----------------- t: %s------------------\n", optarg);
 				if(isNumber(optarg, &n) == 0 && n >= 0){
+					res = 1;
 					//t = n;
 					ts.tv_sec = n / 1000;
 					ts.tv_nsec = (n % 1000) * 1000000;
 				}
 				else{
+					res = -1;
 					fprintf(stderr, "argomento di -t errato\n");
 					//t = 0;
 				}
+				if(found_p)
+						print_p("Specifica tempo di attesa tra due richieste", NULL, 0, res, -1, -1);
 				
 				break;
 				
@@ -344,12 +352,12 @@ int main(int argc, char *argv[]){
 					
 					token = strtok_r(optarg, ",", &tmpstr);
 					while (token) { //ho scelto che per fare la lock non devo aprire il file 
-						
-						if(lockFile(token) == -1){
+						res = lockFile(token);
+						if(found_p)
+							print_p("Lock file", &token, 1, res, -1, -1);
+						if(res == -1){
 							perror("Errore in lockFile");
-							return -1;
 						}
-					
 						token = strtok_r(NULL, ",", &tmpstr);	
 					}
 				}
@@ -366,10 +374,12 @@ int main(int argc, char *argv[]){
 					token = strtok_r(optarg, ",", &tmpstr);
 					while (token) { //ho scelto che per fare la lock non devo aprire il file 
 					
-						if(unlockFile(token) == -1){
-							perror("Errore in unlockFile");
-							return -1;
+						res = unlockFile(token);
+						if(res == -1){
+							perror("Errore in unlockFile"); //che succede se non interrompo? (ho tolto il return -1)
 						}
+						if(found_p)
+							print_p("Unock file", &token, 1, res, -1, -1);
 						
 						token = strtok_r(NULL, ",", &tmpstr);	
 					}
@@ -392,10 +402,13 @@ int main(int argc, char *argv[]){
 							perror("Errore in lockFile");
 							return -1;
 						}
-						if(removeFile(token) == -1){
-							perror("Errore in removeFile");
-							return -1;
+						res = removeFile(token);
+						
+						if(res == -1){
+							perror("Errore in removeFile"); //che succede se non interrompo? (ho tolto il return -1)
 						}
+						if(found_p)
+							print_p("Remove file", &token, 1, res, -1, -1);
 						
                         //lo cancello quindi non ha senso l'unlock 
 						
@@ -446,6 +459,34 @@ int main(int argc, char *argv[]){
 	
 }
 
+void print_p(char *op, char *file[], int n_files, int esito, int rB, int wB){
+	if(op != NULL){
+		printf("\nTipo di operazione: %s, ", op);
+		if(file != NULL && n_files > 0){
+			printf("Files di riferimento: ");
+			for(int i = 0; i < n_files; i++){
+				if(file[i] != NULL)
+					printf("%s, ", file[i]);
+			}
+		}
+		if(rB >= 0)
+			printf("Bytes letti: %d, ", rB);
+		if(wB >= 0)
+			printf("Bytes scritti: %d, ", wB);
+		if(esito >= 0)
+			printf("Esito: SUCCESS\n\n");
+		else
+			printf("Esito: FAIL\n\n");
+			
+		fflush(stdout);
+	}
+	else
+		fprintf(stderr, "Errore nell'invio dell'operazione alla funzione di stampa\n");
+	
+	return;
+}
+			
+
 int isdot(const char dir[]) {
   int l = strlen(dir);
   
@@ -454,7 +495,7 @@ int isdot(const char dir[]) {
   return 0;
 }
 
-void lsR(const char *dir, int *err, int *n, int flag, char *D_removed) {
+void lsR(const char *dir, int *err, int *n, int flag, char *D_removed, int found_p) {
 	
     // controllo ogni volta che il parametro sia una directory
 	if(!(*err) && *n > 0){ //fermo la ricorsione prima che i file finiscano nel caso in cui flag = 1 
@@ -509,12 +550,12 @@ void lsR(const char *dir, int *err, int *n, int flag, char *D_removed) {
 				}
 				if(S_ISDIR(statbuf.st_mode)) {
 					if ( !isdot(filename) ) //se è una directoty diversa da quella corrente
-						lsR(filename, err, n, flag, D_removed); //ricorsione
+						lsR(filename, err, n, flag, D_removed, found_p); //ricorsione
 				}
 				else if(S_ISREG(statbuf.st_mode)){
 					if(*n <= 0)
 						return;
-					if(write_file(filename, D_removed) == -1){
+					if(write_file(filename, D_removed, found_p) == -1){
 						fprintf(stderr, "scrittura file in -w\n");
 						*err = 1;
 						return;
@@ -532,11 +573,11 @@ void lsR(const char *dir, int *err, int *n, int flag, char *D_removed) {
 	return;
 }
 
-int write_file(char *file, char *D_removed){
+int write_file(char *file, char *D_removed, int found_p){
 
 	FILE *fp;
 	char buff[MAX_SIZE];
-	int size, n;
+	int size, n, res;
 	struct stat st;
 	
 	if(openFile(file, O_LOCK) == -1){ //per scrivere apro il file con la lock 
@@ -545,7 +586,18 @@ int write_file(char *file, char *D_removed){
 				perror("Errore in openFile");
 				return -1;
 			}
-			if(writeFile(file, D_removed) == -1){ 
+			res = writeFile(file, D_removed);
+			if(found_p){
+				if((fp = fopen(file, "rb")) == NULL){
+					perror("errore fopen");
+					return -1;
+				}
+				
+				stat(file, &st);
+				print_p("Write File", &file, 1, res, -1, st.st_size);
+				fclose(fp);
+			}
+			if( res == -1){ 
 				perror("Errore in writeFile");
 				return -1;
 			}	

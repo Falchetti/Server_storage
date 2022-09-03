@@ -61,4 +61,4 @@ test2 :
 	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
 	
 test :
-	./client -f /home/giulia/Server_storage/mysock -D exp -w dirw -d savings -R  & ./server_4s -k config.txt
+	./client -p -f /home/giulia/Server_storage/mysock -D exp -d savings -w dirw -W sasuke,itachi -r dirw/orocimaru -t 5 -l sasuke -usasuke,itachi -c sasuke -R 6 -h  & ./server_4s -k config.txt
