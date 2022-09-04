@@ -57,15 +57,14 @@ void lsR(const char *dir, int *err, int *n, int flag, char *D_removed, int found
 int isdot(const char dir[]);
 int write_file(char *file, char *D_removed, int found_p);
 void print_p(char *op, char *file[], int n_files, int esito, int rB, int wB);
+//in realtà non serve sia un vettore, basta char * 
 
 int main(int argc, char *argv[]){
 	
 	int flag, n, res;
-	//int t = 0;
-	
+
 	char *d_read = NULL;
 	char *D_removed = NULL;
-	int t_requests = 0;
 	char *socket_name = NULL;  //const? 
 	
 	int found_r = 0;
@@ -73,15 +72,14 @@ int main(int argc, char *argv[]){
 	int found_h = 0;
 	int found_p = 0;
 	
-	char *tmpstr, *token, *buff; //li devo inizializzare a NULL?? (guarda strtok)
-	size_t size;
+	char *tmpstr, *token; //li devo inizializzare a NULL?? (guarda strtok)
 	
 	struct timespec ts = {0};
 
 	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:p")) != -1) && !found_h ){ //fai controllo su getopt per la questione R arg opzionale
 		
 		#ifdef DEBUG2
-			printf("t_requests = %d, found_r = %d, found_w = %d, found_p = %d\n", t_requests, found_r, found_w, found_p);
+			printf("found_r = %d, found_w = %d, found_p = %d\n", found_r, found_w, found_p);
 			if( d_read != NULL)   
 				printf("d_read = %s, ", d_read);
 			if( D_removed != NULL)   
@@ -246,9 +244,15 @@ int main(int argc, char *argv[]){
 							perror("Errore in openFile");
 							return -1;                               //attenzione che questi return -1 non saltino i cleanup necessari
 						}
-		
-						buff = malloc(SZ_STRING*sizeof(char));
-						size = (size_t) SZ_STRING; //forse non è il corretto utilizzo, il punto è salvarci dentro la vera size 
+						char *buff;
+						size_t size;
+						
+						if((buff = malloc(SZ_STRING*sizeof(char))) == NULL){
+							perror("malloc");
+							int errno_copy = errno;
+							fprintf(stderr,"FATAL ERROR: malloc\n");
+							exit(errno_copy);
+						} 
 						
 						res = readFile(token,  (void *) &buff, &size);
 						
@@ -257,6 +261,7 @@ int main(int argc, char *argv[]){
 						
 						if(res == -1){
 							perror("Errore in readFile");
+							free(buff);
 							return -1;
 						} 
 						
@@ -272,6 +277,7 @@ int main(int argc, char *argv[]){
      					if(d_read != NULL)
 							if(save_file(d_read, token, buff, size) == -1){
 								//serve una stampa?
+								free(buff);
 								return -1;
 							}
 						
@@ -582,6 +588,7 @@ int write_file(char *file, char *D_removed, int found_p){
 	
 	if(openFile(file, O_LOCK) == -1){ //per scrivere apro il file con la lock 
 		if(errno == ENOENT){           //se il file non esiste ne creo uno con attiva la lock 
+			fprintf(stderr, "CI SONO\n");
 			if(openFile(file, O_CREATE_LOCK) == -1){
 				perror("Errore in openFile");
 				return -1;

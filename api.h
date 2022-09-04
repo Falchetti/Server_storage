@@ -23,7 +23,7 @@ int readNFile(int N, const char *dirname);
 
 int isTimeout(struct timespec, struct timespec);  
 int save_file(const char *dir, char *file, char *buff, int n);
-int msg_sender(char *msg, int fd, char *cmd, const char *path, int size, char *cnt);
+int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt);
 int isNumber(void *el, int *n);
 
 
