@@ -31,6 +31,78 @@
 //vedi se usare exit o pthread exit, nel caso di malloc uccido tutto il programma o solo il thread?
 
 
+//    FUNZIONI PER MUTUA ESCLUSIONE -> Versione vista a lezione   //
+static void Pthread_mutex_lock (pthread_mutex_t* mtx)
+{
+    int err;
+    if ((err = pthread_mutex_lock(mtx)) != 0 )
+    {
+        errno = err;
+        perror("lock");
+        pthread_exit((void*)&errno);
+    }
+}
+
+#define LOCK(l)      if (Pthread_mutex_lock(l)!=0)        { \
+    fprintf(stderr, "ERRORE FATALE lock\n");		    \
+    pthread_exit((void*)EXIT_FAILURE);			    \
+  } 
+static void Pthread_mutex_unlock (pthread_mutex_t* mtx)
+{
+    int err;
+    if ((err = pthread_mutex_unlock(mtx)) != 0 )
+    {
+        errno = err;
+        perror("unlock");
+        pthread_exit((void*)&errno);
+    }
+}
+
+/** Evita letture parziali
+ *
+ *   \retval -1   errore (errno settato)
+ *   \retval  0   se durante la lettura da fd leggo EOF
+ *   \retval size se termina con successo
+ */
+static inline int readn(long fd, void *buf, size_t size) {
+    size_t left = size;
+    int r;
+    char *bufptr = (char*)buf;
+    while(left>0) {
+	if ((r=read((int)fd ,bufptr,left)) == -1) {
+	    if (errno == EINTR) continue;
+	    return -1;
+	}
+	if (r == 0) return 0;   // EOF
+        left    -= r;
+	bufptr  += r;
+    }
+    return size;
+}
+
+/** Evita scritture parziali
+ *
+ *   \retval -1   errore (errno settato)
+ *   \retval  0   se durante la scrittura la write ritorna 0
+ *   \retval  1   se la scrittura termina con successo
+ */
+static inline int writen(long fd, void *buf, size_t size) {
+    size_t left = size;
+    int r;
+    char *bufptr = (char*)buf;
+    while(left>0) {
+	if ((r=write((int)fd ,bufptr,left)) == -1) {
+	    if (errno == EINTR) continue;
+	    return -1;
+	}
+	if (r == 0) return 0;  
+        left    -= r;
+	bufptr  += r;
+    }
+    return 1;
+}
+
+
 //ricordati di pensare alle lock su l'hashtable 
 
 typedef struct open_node{
@@ -80,7 +152,7 @@ int insert_head_f(file_node **list, char *path, int sz_cnt, char *cnt); //potrei
 int openFC(icl_hash_t *ht, char *path, int fd);
 int openFL(icl_hash_t *ht, char *path, int fd);
 int openFO(icl_hash_t *ht, char *path, int fd);
-int openFCL(icl_hash_t *ht, char *path, int fd);
+int openFCL(char *path, int fd);
 int closeF(icl_hash_t *ht, char *path, int fd);
 int readF(icl_hash_t *ht, char *path, int fd);
 int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd);
@@ -104,13 +176,18 @@ pthread_cond_t condCoda;*/
 //variabili globali 
 Queue_t *task_queue;
 Queue_t *file_queue;
+//controlla la mutex sia nelle api (anche quella di inizializzazione)
 
 icl_hash_t *hash_table = NULL;
+pthread_mutex_t ht_mtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t ht_cond = PTHREAD_COND_INITIALIZER;
 
-int st_dim; 
-int n_files;
+
+int st_dim;
 int st_dim_MAX;
+int n_files;
 int n_files_MAX;
+pthread_mutex_t server_info_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 FILE *log_file; // puntatore al file di log
 pthread_mutex_t log_mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -137,7 +214,8 @@ static void *sigHandler(void *arg) { //mi raccomando breve
 				// sblocca l'accept rendendo non piu' valido il listenfd
 				//shutdown(listenfd, SHUT_RDWR);
 				rit = 1;
-				write(pipe_d, &rit, 2);
+				if(writen(pipe_d, &rit, 2) == -1)
+					perror("Write sig_handler");
 				
 				// SOLUZIONE ALTERNATIVA CHE NON USA shutdown:
 				// Il thread dispatcher (in questo esercizio il main thread) invece di sospendersi su una accept si
@@ -147,7 +225,8 @@ static void *sigHandler(void *arg) { //mi raccomando breve
 				return NULL;
 			case SIGHUP: 
 				rit = -1;
-				write(pipe_d, &rit, 2);
+				if(writen(pipe_d, &rit, 2) == -1)
+					perror("Write sig_handler");
 				
 				return NULL;  //va bene? O devo rimanere in attesa di un possibile sigint?
 			default:  ; 
@@ -158,7 +237,7 @@ static void *sigHandler(void *arg) { //mi raccomando breve
 
 
 int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo faccio chiamando la giusta funzione, rispondo al client, scrivo fd sulla pipe per il server  
-	
+		
 	char *msg; 
 	char *tmpstr, *token, *token2;
 	//int seed = time(NULL);
@@ -170,7 +249,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 		fprintf(stderr,"FATAL ERROR: malloc\n");
 		exit(errno_copy);
 	}
-	if(read(fd_c, msg, MSG_SIZE) == -1){
+	if(readn(fd_c, msg, MSG_SIZE) == -1){
 		perror("read socket lato server");
 		free(msg);
 		return -1; //ok???  
@@ -192,9 +271,9 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				free(msg);
 				return -1;
 			}
-			pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 			fprintf(log_file,"%s %s -1 -1 %lu\n", "open_c", token, pthread_self());
-			pthread_mutex_unlock(&log_mtx);				   
+			Pthread_mutex_unlock(&log_mtx);				   
 			
 		}
 		else if(strcmp(token, "openfl") == 0){
@@ -203,9 +282,9 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				//fprintf(stderr, "openLock non riuscita\n");
 			}
 			else{
-				pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+				Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 				fprintf(log_file,"%s %s -1 -1 %lu\n", "open_l", token, pthread_self());
-				pthread_mutex_unlock(&log_mtx);
+				Pthread_mutex_unlock(&log_mtx);
 			}
 			
 		}
@@ -215,27 +294,33 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				free(msg);
 				return -1;
 			}
-			pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 			fprintf(log_file,"%s %s -1 -1 %lu\n", "open_o", token, pthread_self());
-			pthread_mutex_unlock(&log_mtx);
+			Pthread_mutex_unlock(&log_mtx);
 			
 		}
 		else if(strcmp(token, "openfcl") == 0){
 			token = strtok_r(NULL, ";", &tmpstr);
-			if(openFCL(hash_table, token, fd_c) == -1){
+		
+			if(openFCL(token, fd_c) == -1){
 				free(msg);
 				return -1;
 			}
-			pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 			fprintf(log_file,"%s %s -1 -1 %lu\n", "open_cl", token, pthread_self());
-			pthread_mutex_unlock(&log_mtx);
+			Pthread_mutex_unlock(&log_mtx);
 			
 		}
 		else if(strcmp(token, "disconnesso") == 0){//da chiudere i file e aggiornarli
+			
+			Pthread_mutex_lock(&ht_mtx);
+			pthread_cond_broadcast(&ht_cond); //sveglio chi era in attesa della lock 
+			Pthread_mutex_unlock(&ht_mtx);
+			
 			close(fd_c); //non so se farlo qui o in run_server 
-			pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 			fprintf(log_file,"%s %d -1 -1 %lu\n", "close_connection", fd_c, pthread_self());
-			pthread_mutex_unlock(&log_mtx);
+			Pthread_mutex_unlock(&log_mtx);
 			
 			#ifdef DEBUG
 				fprintf(stderr, "QUEUE INFO:\nlen: %d\nElm:\n", (int) length(file_queue));
@@ -248,6 +333,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 					}
 					else
 						fprintf(stderr, "//\n");
+					free(tmp);
 						
 				}
 			#endif
@@ -260,9 +346,9 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				free(msg);
 				return -1;
 			}
-			pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 			fprintf(log_file,"%s %s -1 -1 %lu\n", "close", token, pthread_self());
-			pthread_mutex_unlock(&log_mtx);
+			Pthread_mutex_unlock(&log_mtx);
 			
 		}
 		else if(strcmp(token, "readf") == 0){
@@ -277,9 +363,13 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 			token = strtok_r(NULL, ";", &tmpstr);
 			token2 = strtok_r(NULL, ";", &tmpstr);
 			if(isNumber(token2, &n) == 0 && n > 0){
-				write(fd_c, "Ok", 3); //gestione errore 
-				if(read(fd_c, token2, n) == -1){
-					perror("read server su write client");
+				if(writen(fd_c, "Ok", 3) == -1){
+					perror("write server in execute task");
+					free(msg);
+					return -1;
+				}
+				if(readn(fd_c, token2, n) == -1){
+					perror("read server in execute task");
 					free(msg);
 					return -1;
 				}
@@ -296,17 +386,24 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 			token = strtok_r(NULL, ";", &tmpstr);
 			int res = lockF(hash_table, token, fd_c);
 			switch(res){
-				case -1: write(fd_c, "Err:fileNonEsistente", 21); 
+				case -1: 
+					if(writen(fd_c, "Err:fileNonEsistente", 21) == -1)
+						perror("write server execute task lockf");
 					free(msg);
 					return -1;
-				case 0: write(fd_c, "Ok", 3);	
+				case 0: 
+					if(writen(fd_c, "Ok", 3) == -1){
+						perror("write server execute task lockf");
+						free(msg);
+						return -1;
+					}
 					break;
 				default: fprintf(stderr, "Errore, return from lockF");
 			}
 			if(res != -1){
-				pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+				Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 				fprintf(log_file,"%s %s -1 -1 %lu\n", "lock", token, pthread_self());
-				pthread_mutex_unlock(&log_mtx);
+				Pthread_mutex_unlock(&log_mtx);
 			}
 			
 		}
@@ -316,17 +413,21 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				free(msg);
 				return -1;
 			}
-			pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 			fprintf(log_file,"%s %s -1 -1 %lu\n", "unlock", token, pthread_self());
-			pthread_mutex_unlock(&log_mtx);
+			Pthread_mutex_unlock(&log_mtx);
 			
 		}
 		else if(strcmp(token, "appendTof") == 0){
 			token = strtok_r(NULL, ";", &tmpstr);
 			token2 = strtok_r(NULL, ";", &tmpstr);
 			if(isNumber(token2, &n) == 0 && n > 0){
-				write(fd_c, "Ok", 3); //gestione errore 
-				if(read(fd_c, token2, n) == -1){
+				if(writen(fd_c, "Ok", 3) == -1){
+					perror("write server execute task appendTof");
+					free(msg);
+					return -1;
+				} 
+				if(readn(fd_c, token2, n) == -1){
 					perror("read server su appendto client");
 					free(msg);
 					return -1;
@@ -360,8 +461,12 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 		}
 
 		else{
-			fprintf(stderr, "Opzione non ancora implementata\n");
-			write(fd_c, "Ok", 3);
+			fprintf(stderr, "Opzione non ancora implementata: %s\n", token);
+			if(writen(fd_c, "Ok", 3) == -1){
+				perror("write server execute task opz sconosciuta");
+				free(msg);
+				return -1;
+			}
 		}
 		
 	}
@@ -371,24 +476,26 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 		print_deb(hash_table);
 	#endif	
 	
-	//free(msg); se lo metto si impalla, come mai? 
+	//free(msg); //se lo metto si impalla, come mai? 
+	//ESCONO MILLE ERRORI, DA AGGIUSTARE POI 
 	return 0;
 }
 
 void *init_thread(void *args){ //CONSUMATORE
 	int res;
+	
 	//fprintf(stderr, "sono nato %lu\n", pthread_self());
 	while(1){
 		
-		
-		int  *fd;		
-		if((fd = pop(task_queue)) == NULL){
+		int  *fd = pop(task_queue);		
+		if(fd == NULL){
 			fprintf(stderr,"Errore pop, init thread\n");
 			exit(1); //da modificare 
 		}
 		if( *fd == -1)
             return (void*) 0;
-        res = executeTask(*fd);
+		
+		res = executeTask(*fd);
 		if( res == -1){
 			free(fd); //serve?
 			return NULL; //In questo caso è ok? controlla pthread_create 
@@ -404,9 +511,11 @@ void *init_thread(void *args){ //CONSUMATORE
 	
 		//fprintf(stderr, "scrivo sulla pipe: %d fd : %d\n", *((int*)args), fd);
 	
-		write(*((int*)args), fd, 2); //gestione errore scrittura su pipe 
+		if(writen(*((int*)args), fd, 2) == -1){
+			perror("write init_thread su pipe");
+			return NULL; //In questo caso è ok? controlla pthread_create 
+		}
 	
-	    //free(fd)
 	}
 	return (void *) 0; 
 }
@@ -437,6 +546,7 @@ int run_server(struct sockaddr_un *sa, int pipe, int sig_pipe){
 	int fd_skt, fd_c, fd_r = 0;
 	int fd_num = 0; //si ricorda il max fd attivo 
     int	fd; //indice per select
+	int *data;
 	
 	fd_set set; //fd attivi
 	fd_set rdset; //fd attesi in lettura 
@@ -506,9 +616,9 @@ int run_server(struct sockaddr_un *sa, int pipe, int sig_pipe){
 						//fprintf(stderr, "ACCEPT fatta, %d è il fd_c del client\n", fd_c);
 						//if fd_c != -1 
 						
-						pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+						Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 						fprintf(log_file,"%s %d -1 -1 %lu\n", "open_connection", fd_c, pthread_self());
-						pthread_mutex_unlock(&log_mtx);
+						Pthread_mutex_unlock(&log_mtx);
 					   
 						FD_SET(fd_c, &set); //fd_c pronto
 						if(fd_c > fd_num) 
@@ -522,7 +632,7 @@ int run_server(struct sockaddr_un *sa, int pipe, int sig_pipe){
 
 					//fprintf(stderr, "ho letto il fd: %d di PIPE, faccio read\n", fd);					
 						
-						if(read(pipe, &fd_r, 2) != -1){ //richiesta servita, fd_r è di nuovo libero, aggiorno set e fd_num
+						if(readn(pipe, &fd_r, 2) != -1){ //richiesta servita, fd_r è di nuovo libero, aggiorno set e fd_num
 							if(fd_r >= 0){
 								FD_SET(fd_r, &set);
 								if(fd_r > fd_num) 
@@ -550,7 +660,7 @@ int run_server(struct sockaddr_un *sa, int pipe, int sig_pipe){
 					}
 					else if(fd == sig_pipe){ //caso semplice sigint/sigquit 
 						
-						if(read(sig_pipe, &fd_r, 2) != -1){
+						if(readn(sig_pipe, &fd_r, 2) != -1){
 							if(fd_r > 0){ //sigint, sigquit
 								stop = 1;
 								//dovrei chiudere la pipe, il socket e le connessioni attive??
@@ -558,12 +668,15 @@ int run_server(struct sockaddr_un *sa, int pipe, int sig_pipe){
 							else
 								sighup = 1;
 						}
-						//else{qualcosa}
+						else{
+							perror("READ SIG_PIPE MASTER:");
+							return -1;
+						}
 					}
 					else{ //altrimenti eseguo il comando richiesto dal descrittore 
 						
 						//fprintf(stderr, "ho letto un descrittore client fd: %d, faccio SUBMIT\n", fd);
-						int *data = malloc(sizeof(int));
+						data = malloc(sizeof(int));
 						
 						if (data == NULL) {
 							perror("Producer malloc");
@@ -626,8 +739,9 @@ int main(int argc, char *argv[]){
 			if(strcmp(token, "NFILES") == 0){
 				token = strtok_r(NULL, ":", &tmpstr);
 				token[strlen(token) - 2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
-				if(isNumber(token, &n) == 0 && n > 0)
+				if(isNumber(token, &n) == 0 && n > 0){
 					n_files_MAX = n;
+				}
 				else{
 					fprintf(stderr, "errore in config file: nfiles_max value errato, verrà usato valore di default\n");
 				}
@@ -635,8 +749,9 @@ int main(int argc, char *argv[]){
 			else if(strcmp(token, "DIM") == 0){
 				token = strtok_r(NULL, ":", &tmpstr);
 				token[strlen(token) - 2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
-				if(isNumber(token, &n) == 0 && n > 0)
+				if(isNumber(token, &n) == 0 && n > 0){
 					st_dim_MAX = n;
+				}
 				else{
 					fprintf(stderr, "errore in config file: st_dim_max value errato, verrà usato valore di default\n");
 				}
@@ -941,10 +1056,14 @@ int print_summ(char *log){
 		strtok_r(NULL, " ", &tmpstr);
 		bW_s = strtok_r(NULL, " ", &tmpstr);
 		bR_s = strtok_r(NULL, " ", &tmpstr);
-		if(isNumber(bW_s, &bW) != 0)
+		if(isNumber(bW_s, &bW) != 0){
+			free(buffer);
 			return -1;
-		if(isNumber(bR_s, &bR) != 0)
+		}
+		if(isNumber(bR_s, &bR) != 0){
+			free(buffer);
 			return -1;
+		}
 		//fprintf(stderr, "%s \n %s ; bW %d; bR %d\n", buffer, cmd, bW, bR);
 		
 		if (strncmp(cmd, "rimpiazzamento", MAX_SIZE) == 0) {
@@ -973,13 +1092,15 @@ int print_summ(char *log){
 	
 	fprintf(stderr, "L'algoritmo di rimpiazzamento è stato eseguito %d volte\n", cnt_rimp);
 
+
+	free(buffer);
 	return 0;
 }
 
 file_info *init_file(int lock_owner, int fd, int lst_op, char *cnt, int sz){
 	
 	file_info *tmp;
-	
+	   
 	if((tmp = malloc(sizeof(file_info))) == NULL){
 		perror("malloc");
 		int errno_copy = errno;
@@ -998,9 +1119,11 @@ file_info *init_file(int lock_owner, int fd, int lst_op, char *cnt, int sz){
 	client->next = NULL;
 	
 	tmp->open_owners = client;
-		tmp->lock_owner = lock_owner;
+	tmp->lock_owner = lock_owner;
 	tmp->lst_op = lst_op;
-	
+	if(sz == -1)
+		sz = 0;
+	tmp->cnt_sz = sz;
 	if(sz > 0)
 		memcpy(tmp->cnt, cnt, sz); //controlla 
 
@@ -1091,7 +1214,7 @@ void print_deb(icl_hash_t *ht){
 	icl_entry_t *entry;
 	char *key, *value;
 	int k;
-	
+	Pthread_mutex_lock(&ht_mtx);
 	if (ht) {
 		file_info *aux;
 		
@@ -1103,7 +1226,7 @@ void print_deb(icl_hash_t *ht){
 					fprintf(stderr, "File: %s", key);
 					
 					#ifdef DEBUG
-					fprintf(stderr, ", k = %d, lock_owner: %d, last_op: %d\n",k, key, aux->lock_owner, aux->lst_op);
+					fprintf(stderr, "k = %d, lock_owner: %d, last_op: %d\n",k, aux->lock_owner, aux->lst_op);
 					print_list(aux->open_owners);
 					if(aux->cnt != NULL){
 						fprintf(stderr, "cnt_sz: %d, cnt:\n", aux->cnt_sz);						
@@ -1122,27 +1245,42 @@ void print_deb(icl_hash_t *ht){
 	else{
 		fprintf(stderr, "hash table vuota\n");
 	}
+	Pthread_mutex_unlock(&ht_mtx);
+	
+	return;
 }
+
+//inizio in modo semplice, mettendo grandi sezioni critiche 
 
 int openFC(icl_hash_t *ht, char *path, int fd){ //free(data)?
 	file_info *data;
 	
+	Pthread_mutex_lock(&ht_mtx);
 	if(icl_hash_find(ht, path) != NULL){ 
 		fprintf(stderr, "Impossibile ricreare file già esistente\n");
-		write(fd, "Err:fileEsistente", 18); 
+		if(writen(fd, "Err:fileEsistente", 18) == -1)
+			perror("write server openFC");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else{
+	
 		data = init_file(-1, fd, 0, NULL, -1); 
-		if(st_repl(0, fd, path, NULL) == -1)
+		if(st_repl(0, fd, path, NULL) == -1) //per ora lo faccio tutto lockato 
 				fprintf(stderr, "Errore in repl\n");
 
 		if(icl_hash_insert(ht, path, (void *) data) == NULL){
 			fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
-			write(fd, "Err:inserimento", 16);
+			if(writen(fd, "Err:inserimento", 16) == -1)
+				perror("write server openFC");
+			Pthread_mutex_unlock(&ht_mtx);
 			return -1;
 		}
-		n_files++; //serve una lock
+		Pthread_mutex_unlock(&ht_mtx);
+		
+		Pthread_mutex_lock(&server_info_mtx);
+		n_files++; 
+		Pthread_mutex_unlock(&server_info_mtx);
 		
 		file_entry_queue *qdata;
 		if((qdata = malloc(sizeof(file_entry_queue))) == NULL){
@@ -1159,7 +1297,10 @@ int openFC(icl_hash_t *ht, char *path, int fd){ //free(data)?
 			pthread_exit(NULL); //controlla se va bene 
 		}
 		
-		write(fd, "Ok", 3);
+		if(writen(fd, "Ok", 3) == -1){
+			perror("write server openFC");
+			return -1;
+		}
 		
 		#ifdef DEBUG
 			fprintf(stderr,"---OPEN CREATE FILE\n");
@@ -1172,27 +1313,38 @@ int openFC(icl_hash_t *ht, char *path, int fd){ //free(data)?
 }
 
 int openFL(icl_hash_t *ht, char *path, int fd){
-	//HO CIRCA COPIATO IL CODICE DEL SERVER SUL MESSAGGIO LCKF, POI IMPACCHETTA TUTTO IN DELLE FUNZIONI 		
 	file_info *tmp;
+	
+	Pthread_mutex_lock(&ht_mtx);
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile fare lock su file non esistente\n"); //me lo stampa ogni volta che creo un file, aggiustalo
-		write(fd, "Err:fileNonEsistente", 21); 
-		/*char * msg = malloc(MSG_SIZE*sizeof(char));
-		
-		read(fd, msg, 21);
-		fprintf("VEDIAMO: msg %s strlen %d\n", msg, strlen(msg));*/
-		//qui ci vuole un return -1?
+		if(writen(fd, "Err:fileNonEsistente", 21) == -1)
+			perror("write server openFL");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	} 
 	else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro (per ora)
 		while((tmp->lock_owner != -1 && tmp->lock_owner != fd)){
-			sleep(1); //attesa attiva??
+			pthread_cond_wait(&ht_cond,&ht_mtx);
 		}
+		if((tmp = icl_hash_find(ht, path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
+			fprintf(stderr, "Impossibile fare lock su file non esistente\n"); //me lo stampa ogni volta che creo un file, aggiustalo
+			if(writen(fd, "Err:fileNonEsistente", 21) == -1)
+				perror("write server openFL");
+			Pthread_mutex_unlock(&ht_mtx);
+			return -1;
+		} 
+		
 		tmp->lock_owner = fd;
 		insert_head(&(tmp->open_owners), fd); //dovrei controllare val ritorno
 		
 		tmp->lst_op = 0;
-		write(fd, "Ok", 3);	
+		
+		Pthread_mutex_unlock(&ht_mtx);
+		if(writen(fd, "Ok", 3) == -1){
+			perror("write server openFL");
+			return -1;
+		}	
 		
 	}
 	
@@ -1205,17 +1357,25 @@ int openFL(icl_hash_t *ht, char *path, int fd){
 
 int openFO(icl_hash_t *ht, char *path, int fd){
 	file_info *tmp;
+	Pthread_mutex_lock(&ht_mtx);
 	
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile aprire un file non esistente\n");
-		write(fd, "Err:fileNonEsistente", 21);
+		if(writen(fd, "Err:fileNonEsistente", 21) == -1)
+			perror("write server openFO");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	} 
 	else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro (per ora)
 		insert_head(&(tmp->open_owners), fd); //dovrei controllare val ritorno
 		tmp->lst_op = 0;
 		
-		write(fd, "Ok", 3);	
+		Pthread_mutex_unlock(&ht_mtx);
+		
+		if(writen(fd, "Ok", 3) == -1){
+			perror("write server openF0");
+			return -1;
+		}
 	}
 	#ifdef DEBUG
 		fprintf(stderr,"---OPEN FILE \n");
@@ -1226,12 +1386,14 @@ int openFO(icl_hash_t *ht, char *path, int fd){
 	
 }
 
-int openFCL(icl_hash_t *ht, char *path, int fd){
+int openFCL(char *path, int fd){
 		file_info *data;
-		
-		if(icl_hash_find(ht, path) != NULL){ 
+		Pthread_mutex_lock(&ht_mtx);
+		if(icl_hash_find(hash_table, path) != NULL){ 
 			fprintf(stderr, "Impossibile ricreare un file già esistente\n");
-			write(fd, "Err:fileEsistente", 18); 
+			if(writen(fd, "Err:fileEsistente", 18) == -1)
+				perror("write server openFCL");
+			Pthread_mutex_unlock(&ht_mtx);
 			return -1;
 		} 
 		else{ 
@@ -1239,15 +1401,23 @@ int openFCL(icl_hash_t *ht, char *path, int fd){
 		
 		    if(st_repl(0, fd, path, NULL) == -1)
 				fprintf(stderr, "Errore in repl\n");
-			if(icl_hash_insert(ht, path, data) == NULL){
+			if(icl_hash_insert(hash_table, path, data) == NULL){
 				fprintf(stderr, "Errore nell'inseriemento del file nello storage\n");
-				write(fd, "Err:inserimento", 16);
+				if(write(fd, "Err:inserimento", 16) == -1)
+					perror("write server openFCL");
+				Pthread_mutex_unlock(&ht_mtx);
 				return -1;
 			}	
+			Pthread_mutex_unlock(&ht_mtx);
 			
 			
-			write(fd, "Ok", 3);	
-			n_files++; //lock
+			if(writen(fd, "Ok", 3) == -1){
+				perror("write server openFCL");
+				return -1;
+			}	
+			Pthread_mutex_lock(&server_info_mtx);
+			n_files++; 
+			Pthread_mutex_unlock(&server_info_mtx);
 			file_entry_queue *qdata;
 			
 			if((qdata = malloc(sizeof(file_entry_queue))) == NULL){
@@ -1275,15 +1445,19 @@ int openFCL(icl_hash_t *ht, char *path, int fd){
 	
 int closeF(icl_hash_t *ht, char *path, int fd){
 	file_info *tmp;
-	
+	Pthread_mutex_lock(&ht_mtx);
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile chiudere file non esistente\n");
-		write(fd, "Err:fileNonEsistente", 21); 
+		if(writen(fd, "Err:fileNonEsistente", 21) == -1)
+			perror("write server closeF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else if(tmp->open_owners == NULL || tmp->open_owners->fd != fd){
 		fprintf(stderr, "Impossibile chiudere file che non si è prima aperto\n");
-		write(fd, "Err:fileNonAperto", 18); 
+		if(writen(fd, "Err:fileNonAperto", 18) == -1)
+			perror("write server closeF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else{
@@ -1293,8 +1467,12 @@ int closeF(icl_hash_t *ht, char *path, int fd){
 		if(tmp->lock_owner == fd)
 			tmp->lock_owner = -1;
 		tmp->lst_op = 0;
+		Pthread_mutex_unlock(&ht_mtx);
 
-		write(fd, "Ok", 3);
+		if(writen(fd, "Ok", 3) == -1){
+			perror("write server openFC");
+			return -1;
+		}
 	}
 	#ifdef DEBUG
 		fprintf(stderr,"---CLOSE FILE \n");
@@ -1306,34 +1484,67 @@ int closeF(icl_hash_t *ht, char *path, int fd){
 
 int readF(icl_hash_t *ht, char *path, int fd){
 	file_info *tmp;		
-    char str[MAX_SIZE/10 +2];
-	
+   // char str[MAX_SIZE/10 +2];
+	Pthread_mutex_lock(&ht_mtx);
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile leggere file non esistente\n");
-		write(fd, "Err:fileNonEsistente", 21); 
+		if(writen(fd, "Err:fileNonEsistente", 21) == -1)
+			perror("write server readF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else if(tmp->open_owners == NULL || tmp->open_owners->fd != fd){
 		fprintf(stderr, "Impossibile leggere file non aperto\n");
-		write(fd, "Err:fileNonAperto", 18); 
+		if(writen(fd, "Err:fileNonAperto", 18) == -1)
+			perror("write server readF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else if(tmp->lock_owner != fd && tmp->lock_owner != -1 ){
 		fprintf(stderr, "Impossibile leggere file con lock attiva\n");
-		write(fd, "Err:fileLocked", 15); 
+		if(writen(fd, "Err:fileLocked", 15) == -1)
+			perror("write server readF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else{
 		tmp->lst_op = 0;
 		//strcpy(msg, "Ok"); //vedi se sovrascrive
-		snprintf(str, MAX_SIZE/10 +2, "%d", tmp->cnt_sz);
-		write(fd, str, MSG_SIZE);
-		if(tmp->cnt_sz > 0)
-		   write(fd, tmp->cnt, tmp->cnt_sz); //ha senso il terzo parametro? 
+		char *str;
+		if((str = malloc(MSG_SIZE*sizeof(char))) == NULL){
+			perror("malloc");
+			int errno_copy = errno;
+			fprintf(stderr,"FATAL ERROR: malloc\n");
+			exit(errno_copy);
+		}
+		
+		memset(str, 0, MSG_SIZE); //da aggiustare, meglio usare un protocollo che comunica al client la lunghezza del buffer da leggere
+		
+		int bufsz = snprintf(NULL, 0, "%d",tmp->cnt_sz);
+		snprintf(str, bufsz + 1, "%d",tmp->cnt_sz);
+		
+		if(writen(fd, str, MSG_SIZE) == -1){
+			perror("write server readF");
+			//free(msg);
+			Pthread_mutex_unlock(&ht_mtx);
+			free(str);
+			return -1;
+		}
+		
+		free(str);
+		if(tmp->cnt_sz > 0){
+		   if(writen(fd, tmp->cnt, tmp->cnt_sz) == -1){ //ha senso il terzo parametro? 
+				perror("write server readF");
+				//free(msg);
+				Pthread_mutex_unlock(&ht_mtx);
+				return -1;
+		   }
+		}
+		Pthread_mutex_unlock(&ht_mtx);
 	}
-	pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+	Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 	fprintf(log_file,"%s %s -1 %d %lu\n", "readF", path, tmp->cnt_sz, pthread_self());
-	pthread_mutex_unlock(&log_mtx);
+	Pthread_mutex_unlock(&log_mtx);
 			
 	#ifdef DEBUG
 		fprintf(stderr,"---READ FILE \n");
@@ -1347,25 +1558,34 @@ int readF(icl_hash_t *ht, char *path, int fd){
 
 int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 	file_info *tmp;	
+	Pthread_mutex_lock(&ht_mtx);
 	
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile scrivere su file non esistente\n");
-		write(fd, "Err:fileNonEsistente", 21); 
+		if(writen(fd, "Err:fileNonEsistente", 21) == -1)
+			perror("write server writeF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else if(tmp->open_owners == NULL || tmp->open_owners->fd != fd){
 		fprintf(stderr, "Impossibile scrivere su file non aperto\n");
-		write(fd, "Err:fileNonAperto", 18); 
+		if(writen(fd, "Err:fileNonAperto", 18) == -1)
+			perror("write server writeF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else if (tmp->lst_op == 0) { //forse dovrei usare l'update insert 
 		fprintf(stderr, "L'operazione precedente a writeFile deve essere openFile\n");
-		write(fd, "Err:lastOperation", 18); 
+		if(writen(fd, "Err:lastOperation", 18) == -1)
+			perror("write server writeF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else if(tmp->lock_owner != fd){ //questo me lo assicura l'if precedente in realtà 
 		fprintf(stderr, "Impossibile scrivere su file senza lock\n");
-		write(fd, "Err:fileSenzaLock", 18); 
+		if(writen(fd, "Err:fileSenzaLock", 18) == -1)
+			perror("write server writeF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else{
@@ -1377,7 +1597,12 @@ int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 			if(res == -1)
 				fprintf(stderr, "Errore in repl su WriteFile\n");
 			if(res == -2){
-				write(fd, "Err:fileTroppoGrande", 21);
+				if(writen(fd, "Err:fileTroppoGrande", 21) == -1){
+					perror("write server writeF");
+					Pthread_mutex_unlock(&ht_mtx);
+					return -1;
+				}
+				Pthread_mutex_unlock(&ht_mtx);
 				return -3; //vedi poi come modificare dato che non vuoi interrompere la lettura per questo 
 			}
 			
@@ -1400,18 +1625,26 @@ int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 			//dovrò liberarla questa lista 
 			
 			if(sz > 0){
+				
 				memcpy(tmp->cnt, cnt, sz);
+				Pthread_mutex_lock(&server_info_mtx);
 				st_dim = st_dim - tmp->cnt_sz + sz; //lock 
+				Pthread_mutex_unlock(&server_info_mtx);
 			    tmp->cnt_sz = sz;
 			}
 		}
 		else
 			fprintf(stderr, "richiesta scrittura di file vuoto\n");
 		
-		pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+		Pthread_mutex_unlock(&ht_mtx);
+		
+		Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 		fprintf(log_file,"%s %s %d -1 %lu\n", "writeF", path, sz, pthread_self());
-		pthread_mutex_unlock(&log_mtx);
-		write(fd, "$", 2);
+		Pthread_mutex_unlock(&log_mtx);
+		if(writen(fd, "$", 2) == -1){
+			perror("write server writeF");
+			return -1;
+		}
 	//	fprintf(stderr, "write server: $\n");
 		char *msg;
 		
@@ -1421,10 +1654,18 @@ int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 			fprintf(stderr,"FATAL ERROR: malloc\n");
 			exit(errno_copy);
 		}
-		read(fd, msg, MSG_SIZE);
+		if(readn(fd, msg, MSG_SIZE) == -1){
+			perror("Error read writeF");
+			free(msg);
+			return -1;
+		}
 	//	fprintf(stderr, "read server dopo $: %s\n", msg);
 		
-		write(fd, "Ok", 3);
+		if(writen(fd, "Ok", 3) == -1){
+			perror("write server writeF");
+			free(msg);
+			return -1;
+		}
 		//fprintf(stderr, "write server: OK\n");
 		
 		free(msg);
@@ -1441,20 +1682,27 @@ int writeF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 
 int lockF(icl_hash_t *ht, char *path, int fd){
 	file_info *tmp;	
-
+    
+	Pthread_mutex_lock(&ht_mtx);
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile fare lock su file non esistente\n");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
-	
-
 	else{
 		while((tmp->lock_owner != -1 && tmp->lock_owner != fd)){
-			sleep(1); //attesa attiva??
+			pthread_cond_wait(&ht_cond,&ht_mtx);
 		}
+		if((tmp = icl_hash_find(ht, path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
+			fprintf(stderr, "Impossibile fare lock su file non esistente\n");
+			Pthread_mutex_unlock(&ht_mtx);
+			return -1;
+		}
+		
 		tmp->lock_owner = fd;
 		tmp->lst_op = 0; //vedi se crea problemi alla openfile(O_create|o_lock)
 	}
+	Pthread_mutex_unlock(&ht_mtx);
 	
 	#ifdef DEBUG
 		fprintf(stderr,"---LOCK FILE \n");
@@ -1466,24 +1714,37 @@ int lockF(icl_hash_t *ht, char *path, int fd){
 
 }
 
+//lock e unlock sono gestite in modo diverso 
+
 int unlockF(icl_hash_t *ht, char *path, int fd){
 	file_info *tmp;
-	
+	Pthread_mutex_lock(&ht_mtx);
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile fare lock su file non esistente\n");
-		write(fd, "Err:fileNonEsistente", 21); 
+		if(writen(fd, "Err:fileNonEsistente", 21) == -1)
+			perror("write server unlockF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
     }
 
 	else if(tmp->lock_owner != fd){
 		fprintf(stderr, "Impossibile fare unlock su file di cui non si ha la lock\n");
-		write(fd, "Err:Nolock", 21); 
+		if(writen(fd, "Err:Nolock", 21) == -1)
+			perror("write server unlockF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else{
 		tmp->lock_owner = -1;
 		tmp->lst_op = 0;
-		write(fd, "Ok", 3);
+		
+        pthread_cond_broadcast(&ht_cond);
+        Pthread_mutex_unlock(&ht_mtx);
+		
+		if(writen(fd, "Ok", 3) == -1){
+			perror("write server unlockF");
+			return -1;
+		}
 	}
 	#ifdef DEBUG
 		fprintf(stderr,"---UNLOCK FILE \n");
@@ -1497,19 +1758,26 @@ int unlockF(icl_hash_t *ht, char *path, int fd){
 int appendToF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 	file_info *tmp;	
 	int res;
+	Pthread_mutex_lock(&ht_mtx);
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile scrivere su file non esistente\n");
-		write(fd, "Err:fileNonEsistente", 21); 
+		if(writen(fd, "Err:fileNonEsistente", 21) == -1)
+			perror("write server appendToF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else if(tmp->open_owners == NULL || tmp->open_owners->fd != fd){
 			fprintf(stderr, "Impossibile scrivere su file non aperto\n");
-			write(fd, "Err:fileNonAperto", 18); 
+			if(writen(fd, "Err:fileNonAperto", 18) == -1)
+				perror("write server appendToF");
+			Pthread_mutex_unlock(&ht_mtx);
 			return -1;
 		}
 	else if(tmp->lock_owner != fd){
 			fprintf(stderr, "Impossibile scrivere su file senza lock\n");
-			write(fd, "Err:fileSenzaLock", 18); 
+			if(writen(fd, "Err:fileSenzaLock", 18) == -1)
+				perror("write server appendToF");
+			Pthread_mutex_unlock(&ht_mtx);
 			return -1;
 		}
 	else{
@@ -1521,7 +1789,9 @@ int appendToF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 			if(res == -1)
 				fprintf(stderr, "Errore in repl su AppendToFile\n");
 			else if(res == -2){
-				write(fd, "Err:fileTroppoGrande", 21); 
+				if(writen(fd, "Err:fileTroppoGrande", 21) == -1)
+					perror("write server appendToF");
+				Pthread_mutex_unlock(&ht_mtx);
 				return -1;
 			}
 			else{
@@ -1539,25 +1809,49 @@ int appendToF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 					file_sender(aux, fd);
 					aux = aux->next;
 				}
-				write(fd, "$", 2);
+				if(writen(fd, "$", 2) == -1){
+					perror("write server appendToF");
+					Pthread_mutex_unlock(&ht_mtx);
+					return -1;
+				}
 			}
 			if(tmp->cnt_sz > 0){ //prima era >= 
 				memcpy(tmp->cnt + tmp->cnt_sz, cnt, sz);
 				tmp->cnt_sz += sz;
-				st_dim +=sz; //lock
+				Pthread_mutex_lock(&server_info_mtx);
+				st_dim +=sz; 
+				Pthread_mutex_unlock(&server_info_mtx);
 			}
-				
-			
 			 
 	    }
 		else
 			fprintf(stderr, "richiesta scrittura di file vuoto\n");
 		
-		pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
-		fprintf(log_file,"%s %s %d -1 %lu\n", "append", path, sz, pthread_self());
-		pthread_mutex_unlock(&log_mtx);
+		Pthread_mutex_unlock(&ht_mtx);
 		
-		write(fd, "Ok", 3);			
+		Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+		fprintf(log_file,"%s %s %d -1 %lu\n", "append", path, sz, pthread_self());
+		Pthread_mutex_unlock(&log_mtx);
+		
+		char *msg;
+		if((msg = malloc(MSG_SIZE*sizeof(char))) == NULL){
+			perror("malloc");
+			int errno_copy = errno;
+			fprintf(stderr,"FATAL ERROR: malloc\n");
+			exit(errno_copy);
+		}
+		
+		if(readn(fd, msg, MSG_SIZE) == -1){
+			perror("write server appendToF");
+			return -1;
+		}
+		
+		free(msg);
+		
+		if(writen(fd, "Ok", 3) == -1){
+			perror("write server appendToF");
+			return -1;
+		}		
 	}
 	#ifdef DEBUG
 		fprintf(stderr,"---APPEND TO FILE \n");
@@ -1571,15 +1865,19 @@ int appendToF(icl_hash_t *ht, char *path, char *cnt, int sz, int fd){
 int removeF(icl_hash_t *ht, char *path, int fd){ //controlla di aver liberato bene la memoria
 	file_info *tmp;
 	int old_sz;
-	
+	Pthread_mutex_lock(&ht_mtx);
 	if((tmp = icl_hash_find(ht, path)) == NULL){ 
 		fprintf(stderr, "Impossibile rimuovere file non esistente\n");
-		write(fd, "fail:fileNonEsistente", 22); 
+		if(writen(fd, "fail:fileNonEsistente", 22) == -1)
+			perror("write server removeF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else if(tmp->lock_owner != fd){
 		fprintf(stderr, "Impossibile rimuovere file senza lock\n");
-		write(fd, "fail:fileSenzaLock", 19); 
+		if(writen(fd, "fail:fileSenzaLock", 19) == -1)
+			perror("write server removeF");
+		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
 	else{
@@ -1613,21 +1911,29 @@ int removeF(icl_hash_t *ht, char *path, int fd){ //controlla di aver liberato be
 		//NB: creare funz che liberano memoria!!
 		if(icl_hash_delete(ht, path, NULL, NULL) == -1){ 
 			fprintf(stderr, "Errore nella rimozione del file dallo storage\n");
-			write(fd, "Err:rimozione", 14);
+			if(writen(fd, "Err:rimozione", 14) == -1)
+				perror("write server removeF");
+			Pthread_mutex_unlock(&ht_mtx);
 			return -1;
 		}
 		
-		n_files--; //lock
-		st_dim -= old_sz; //lock 
 		
-		pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+		pthread_cond_broadcast(&ht_cond); //sveglio chi era in attesa della lock 
+        Pthread_mutex_unlock(&ht_mtx);
+
+		Pthread_mutex_lock(&server_info_mtx);
+		n_files--; 
+		st_dim -= old_sz; 
+		Pthread_mutex_unlock(&server_info_mtx);
+		
+		Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 		fprintf(log_file,"%s %s -1 %d %lu\n", "remove", path, old_sz, pthread_self());
-		pthread_mutex_unlock(&log_mtx);
+		Pthread_mutex_unlock(&log_mtx);
 		
-		
-		
-		
-		write(fd, "Ok", 3);
+		if(writen(fd, "Ok", 3) == -1){
+			perror("write server removeF");
+			return -1;
+		}
 		
 		#ifdef DEBUG
 			fprintf(stderr,"---REMOVE FILE\n");
@@ -1652,6 +1958,7 @@ int readNF(icl_hash_t *ht, int fd, int n){
 		all = 1;
 		n = 1;
 	}
+	Pthread_mutex_lock(&ht_mtx);
 	if (ht) {
 		file_info *aux;
 		for (k = 0; k < ht->nbuckets && n > 0; k++)  {
@@ -1663,6 +1970,7 @@ int readNF(icl_hash_t *ht, int fd, int n){
 					perror("malloc");
 					int errno_copy = errno;
 					fprintf(stderr,"FATAL ERROR: malloc\n");
+					Pthread_mutex_unlock(&ht_mtx);
 					exit(errno_copy);
 				}
 				file->path = key;
@@ -1670,9 +1978,9 @@ int readNF(icl_hash_t *ht, int fd, int n){
 				memcpy(file->cnt, aux->cnt, file->cnt_sz);
 				
 				if(file_sender(file, fd) != -1){
-					pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+					Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 					fprintf(log_file,"%s %s -1 %d %lu\n", "readNF", key, file->cnt_sz, pthread_self());
-					pthread_mutex_unlock(&log_mtx);
+					Pthread_mutex_unlock(&log_mtx);
 				}
 				
 				if(!all)
@@ -1685,8 +1993,12 @@ int readNF(icl_hash_t *ht, int fd, int n){
 	else{
 		fprintf(stderr, "hash table vuota\n");
 	}
+	Pthread_mutex_unlock(&ht_mtx);
     
-	write(fd, "$", 2);
+	if(writen(fd, "$", 2) == -1){
+		perror("write server readNF");
+		return -1;
+	}
    // fprintf(stderr, "write 3 server\n");
     char *msg;
 
@@ -1696,10 +2008,18 @@ int readNF(icl_hash_t *ht, int fd, int n){
 		fprintf(stderr,"FATAL ERROR: malloc\n");
 		exit(errno_copy);
 	}
-	read(fd, msg, MSG_SIZE);
+	if(readn(fd, msg, MSG_SIZE) == -1){
+		perror("Err read in readNF");
+		free(msg);
+		return -1;
+	}
 	//	fprintf(stderr, "read server dopo $: %s\n", msg);
 		
-	write(fd, "Ok", 3);
+	if(writen(fd, "Ok", 3) == -1){
+		perror("write server openFC");
+		free(msg);
+		return -1;
+	}
 	//fprintf(stderr, "write server: OK\n");
 	
 	free(msg);
@@ -1715,44 +2035,48 @@ int readNF(icl_hash_t *ht, int fd, int n){
 
 int st_repl(int dim, int fd, char *path, file_node **list){
 	file_entry_queue *exp_file;
+	file_info *tmp;
 	
 	int res = 0;
 	int old_sz;
-	
+	Pthread_mutex_lock(&server_info_mtx);
 	if(dim > st_dim_MAX || st_dim_MAX == 0){
 		fprintf(stderr, "Non è possibile rimpiazzare file, %d > %d\n", dim, st_dim_MAX);
+		Pthread_mutex_unlock(&server_info_mtx);
 		return -2;
     }
 	
 	if(n_files + 1 > n_files_MAX){
+		Pthread_mutex_unlock(&server_info_mtx);
 		if((exp_file = pop(file_queue)) == NULL){
 			perror("OpenFC, pop");
 			free(exp_file);
 			return -1;
 		}
 
-		
 		fprintf(stderr, "FILE DA RIMUOVERE: %s, len_q: %ld\n", exp_file->path, length(file_queue));
-		if(lockF(hash_table, exp_file->path, fd) == -1){
-			fprintf(stderr, "Errore in repl: lockF");
+	
+		if((tmp = icl_hash_find(hash_table, exp_file->path)) == NULL){ 
+			fprintf(stderr, "Impossibile fare lock su file non esistente in repl\n");
 			free(exp_file);
 			return -1;
 		}
-		
-		
-        /*if(icl_hash_find(hash_table, exp_file->path) == NULL){ 
-			fprintf(stderr, "Impossibile rimuovere file non esistente\n");
-			return -1;
+		else{
+			while((tmp->lock_owner != -1 && tmp->lock_owner != fd)){
+				pthread_cond_wait(&ht_cond,&ht_mtx);
+			}
+			if((tmp = icl_hash_find(hash_table, exp_file->path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
+				fprintf(stderr, "Impossibile fare lock su file non esistente in repl\n");
+				free(exp_file);
+				return -1;
+			}
+			
+			tmp->lock_owner = fd;
+			tmp->lst_op = 0; //vedi se crea problemi alla openfile(O_create|o_lock)
 		}
-		else if(exp_file->pnt->lock_owner != fd){
-			fprintf(stderr, "Impossibile rimuovere file senza lock\n");
-			return -1;
-		}*/
-		//ci pensa lui ad aggiornare st_dim e num_file	
 		
 		old_sz = exp_file->pnt->cnt_sz;
-		
-		
+				
 		if(list != NULL)
 			insert_head_f(list, exp_file->path, old_sz, exp_file->pnt->cnt);
 		
@@ -1763,46 +2087,61 @@ int st_repl(int dim, int fd, char *path, file_node **list){
 			return -1;
 		}
 		
-		n_files--; //lock
-		st_dim = st_dim - old_sz; //lock 
+		Pthread_mutex_lock(&server_info_mtx);
+		n_files--; 
+		st_dim = st_dim - old_sz; 
 		fprintf(stderr, "n_files: %d, st_dim: %d\n", n_files, st_dim);
+		Pthread_mutex_unlock(&server_info_mtx);
 		
-		pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+		Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
 		fprintf(log_file,"%s %s -1 %d %lu\n", "rimpiazzamento",  exp_file->path, old_sz, pthread_self());
-		pthread_mutex_unlock(&log_mtx);
+		Pthread_mutex_unlock(&log_mtx);
 		
 		free(exp_file);
 			
 	}
+	else
+		Pthread_mutex_unlock(&server_info_mtx);
 	
-	while(st_dim + dim > st_dim_MAX && length(file_queue) > 0){
+	Pthread_mutex_lock(&server_info_mtx);
+	
+
+	while(st_dim + dim > st_dim_MAX && length(file_queue) > 0 ){
+		
+		Pthread_mutex_unlock(&server_info_mtx);
+		
 		if((exp_file = pop(file_queue)) == NULL){
 			perror("OpenFC, pop");
 			free(exp_file);
 			return -1;
 		}
-		if(strncmp(exp_file->path, path, UNIX_PATH_MAX) == 0)
+		if(strncmp(exp_file->path, path, UNIX_PATH_MAX) == 0){
+			push(file_queue, exp_file);
 			continue;
+		}
 		
 			
 		fprintf(stderr, "FILE DA RIMUOVERE: %s, len_q: %ld\n", exp_file->path, length(file_queue));
 		
-		if(lockF(hash_table, exp_file->path, fd) == -1){
-			fprintf(stderr, "Errore in repl: lockF");
+		if((tmp = icl_hash_find(hash_table, exp_file->path)) == NULL){ 
+			fprintf(stderr, "Impossibile fare lock su file non esistente in repl\n");
 			free(exp_file);
 			return -1;
 		}
-        //copiato parte di removeF per non riaggiornare la queue 	
-		
-	
-		/*if(icl_hash_find(hash_table, exp_file->path) == NULL){ 
-			fprintf(stderr, "Impossibile rimuovere file non esistente\n");
-			return -1;
+		else{
+			while((tmp->lock_owner != -1 && tmp->lock_owner != fd)){
+				pthread_cond_wait(&ht_cond,&ht_mtx);
+			}
+			if((tmp = icl_hash_find(hash_table, exp_file->path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
+				fprintf(stderr, "Impossibile fare lock su file non esistente in repl\n");
+				free(exp_file);
+				return -1;
+			}
+			
+			tmp->lock_owner = fd;
+			tmp->lst_op = 0; 
 		}
-		else if(exp_file->pnt->lock_owner != fd){
-			fprintf(stderr, "Impossibile rimuovere file senza lock\n");
-			return -1;
-		}*/
+
 		old_sz = exp_file->pnt->cnt_sz;
 		if(list != NULL)
 			insert_head_f(list, exp_file->path, old_sz, exp_file->pnt->cnt);
@@ -1813,20 +2152,27 @@ int st_repl(int dim, int fd, char *path, file_node **list){
 			free(exp_file);
 			return -1;
 		}
+		Pthread_mutex_lock(&server_info_mtx);
+		n_files--;
+		st_dim = st_dim - old_sz; 
+		Pthread_mutex_unlock(&server_info_mtx);
 		
-		n_files--; //lock
-		st_dim = st_dim - old_sz; //lock 
-		pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+		Pthread_mutex_lock(&log_mtx); 
 		fprintf(log_file,"%s %s -1 %d %lu\n", "rimpiazzamento",  exp_file->path, old_sz, pthread_self());
-		pthread_mutex_unlock(&log_mtx);
+		Pthread_mutex_unlock(&log_mtx);
+		
 		free(exp_file);
-	
+		
+		Pthread_mutex_lock(&server_info_mtx);
+		
 	}
 		
 	if(st_dim + dim > st_dim_MAX){
+		Pthread_mutex_unlock(&server_info_mtx);
 		fprintf(stderr, "Non è possibile rimpiazzare file\n");
 		return -2;
     }
+	Pthread_mutex_unlock(&server_info_mtx);
 		
 	return res;
 }
@@ -1834,7 +2180,7 @@ int st_repl(int dim, int fd, char *path, file_node **list){
 int file_sender(file_node *file, int fd){
 		
 	//considera opzione file null
-	char *msg;
+	char *msg, *str;
 	
 	if((msg = malloc(MSG_SIZE*sizeof(char))) == NULL){
 		perror("malloc");
@@ -1842,29 +2188,51 @@ int file_sender(file_node *file, int fd){
 		fprintf(stderr,"FATAL ERROR: malloc\n");
 		exit(errno_copy);
 	}
-	char str[MAX_SIZE/10+2]; //cambiare
 	
+	
+	if((str = malloc(MSG_SIZE*sizeof(char))) == NULL){
+		perror("malloc");
+		int errno_copy = errno;
+		fprintf(stderr,"FATAL ERROR: malloc\n");
+		free(msg);
+		exit(errno_copy);
+	}
+		
+	memset(str, 0, MSG_SIZE); //da aggiustare, meglio usare un protocollo che comunica al client la lunghezza del buffer da leggere
+	memset(msg, 0, MSG_SIZE); //da aggiustare, meglio usare un protocollo che comunica al client la lunghezza del buffer da leggere
+
 	strncpy(msg, file->path, UNIX_PATH_MAX);
 	strncat(msg, ";", MSG_SIZE - strlen(msg) - 1);
-	snprintf(str, MAX_SIZE/10+2, "%d", file->cnt_sz);
+	int bufsz = snprintf(NULL, 0, "%d",file->cnt_sz);
+	snprintf(str, bufsz + 1, "%d",file->cnt_sz);
 	strncat(msg, str, MSG_SIZE - strlen(msg) - 1);
 
-	write(fd, msg, MSG_SIZE);
+	if(writen(fd, msg, MSG_SIZE) == -1){
+		perror("write server file_sender");
+		free(msg);
+		free(str);
+		return -1;
+	}
+	free(str);
 	//fprintf(stderr, "write path;sz server: %s\n", msg);
 	if(file->cnt_sz > 0){
-		if(read(fd, msg, MSG_SIZE) == -1){
+		if(readn(fd, msg, MSG_SIZE) == -1){
 			perror("errore lettura");
 			free(msg);
 			return -1;
 		}
 		//fprintf(stderr, "read (cnt_sz > 0) server: %s\n", msg);
 		if(strncmp(msg, "Ok", 3) == 0){
-			write(fd, file->cnt, file->cnt_sz);
+			if(writen(fd, file->cnt, file->cnt_sz) == -1){
+				perror("write server file_sender");
+				free(msg);
+				return -1;
+			}
 			//fprintf(stderr, "write cnt server\n");
 		}
 	}
 
-	if(read(fd, msg, MSG_SIZE) == -1){
+	if(readn(fd, msg, MSG_SIZE) == -1){
 		perror("errore lettura");
 		free(msg);
 		return -1;

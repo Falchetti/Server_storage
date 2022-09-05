@@ -25,6 +25,54 @@
 #define O_LOCK 2
 #define O_CREATE_LOCK 3 
 
+/** Evita letture parziali
+ *
+ *   \retval -1   errore (errno settato)
+ *   \retval  0   se durante la lettura da fd leggo EOF
+ *   \retval size se termina con successo
+ */
+static inline int readn(long fd, void *buf, size_t size) {
+    size_t left = size;
+    int r;
+    char *bufptr = (char*)buf;
+    while(left>0) {
+	
+	if ((r=read((int)fd ,bufptr,left)) == -1) {
+	    if (errno == EINTR) continue;
+	    return -1;
+	}
+
+	if (r == 0) return 0;   // EOF
+    left    -= r;
+	bufptr  += r;
+    }
+	
+    return size;
+}
+
+/** Evita scritture parziali
+ *
+ *   \retval -1   errore (errno settato)
+ *   \retval  0   se durante la scrittura la write ritorna 0
+ *   \retval  1   se la scrittura termina con successo
+ */
+static inline int writen(long fd, void *buf, size_t size) {
+    size_t left = size;
+    int r;
+    char *bufptr = (char*)buf;
+    while(left>0) {
+	if ((r=write((int)fd ,bufptr,left)) == -1) {
+	    if (errno == EINTR) continue;
+	    return -1;
+	}
+	if (r == 0) return 0;  
+        left    -= r;
+	bufptr  += r;
+    }
+    return 1;
+}
+
+
 //forse i define li devi mettere in api.h, leggi commento su client.c  
 
 //****************
@@ -114,7 +162,7 @@ int closeConnection(const char *sockname){
 	//non ho la certezza di sockname però 
 	if(strcmp(sockname, sck_name) == 0){ 	
 		if(fd_s != -1){ //mi assicuro che non fosse già stato chiuso (se è già stato chiuso ignoro la richiesta 
-		    if(write(fd_s, "disconnesso", 12) == -1){//le write dovranno essere riviste (atomicità)
+		    if(writen(fd_s, "disconnesso", 12) == -1){//le write dovranno essere riviste (atomicità)
 				perror("Errore nella write");
 				return -1;
 			}
@@ -227,7 +275,7 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 			return -1;
 		}
 		
-		if(read(fd_s, msg, MSG_SIZE) == -1){
+		if(readn(fd_s, msg, MSG_SIZE) == -1){
 			perror("read socket lato client");
 			free(msg);
 			return -1; 
@@ -238,7 +286,7 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 			errno = -1; //come lo setto errno in questo caso???
 		}
 		if(n > 0){ //controlla se strstr è ok (not null terminated strings)
-			if(read(fd_s, msg, n) == -1){
+			if(readn(fd_s, msg, n) == -1){
 				perror("read socket lato client");
 				free(msg);
 				return -1;
@@ -361,14 +409,12 @@ int writeFile(const char *pathname, const char* dirname) {
 			free(msg);
 			return 0; //vedi come gestirlo 
 		}
-	   
-		if(read(fd_s, msg, MSG_SIZE) == -1){
+	
+		if(readn(fd_s, msg, 3) == -1){ //ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
 			perror("read socket lato client");
 			free(msg);
 			return -1;
 	    }
-		//fprintf(stderr, "read client finale: %s\n", msg);
-	
 		
 		if(strcmp(msg, "Ok") != 0){ 
 			fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
@@ -411,11 +457,12 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char* dirna
 		}
 		
 		k = file_receiver(dirname, fd_s); 
+
 		
 		if(k == -1)
 			return 0; //vedi come gestirlo 
 		
-		if(read(fd_s, msg, MSG_SIZE) == -1){
+		if(readn(fd_s, msg, 3) == -1){//ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
 			perror("read socket lato client");
 			free(msg);
 			return -1;
@@ -573,7 +620,7 @@ int comunic_cs(char *cmd, const char *pathname, int *err){
 		return -1;
 	}
 
-	if(read(fd_s, msg, MSG_SIZE) == -1){
+	if(read(fd_s, msg, MSG_SIZE) == -1){  //ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
 		perror("read socket lato client");
 		*err = errno;
 		free(msg);
@@ -618,17 +665,17 @@ int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt){
 		strncat(msg, str, MAX_SIZE - strlen(msg) -1);
 		
 		
-		if(write(fd_s, msg, MSG_SIZE) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MAX_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
+		if(writen(fd_s, msg, MSG_SIZE) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MAX_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
 			perror("Write del socket");
 			return -1;
 		}
-		if(size > 0){
-			if(read(fd_s, msg, MAX_SIZE) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MAX_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
-				perror("Write del socket");
+		if(size > 0){ //ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
+			if(readn(fd_s, msg, 3) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MAX_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
+				perror("read del socket");
 				return -1;
 			}
 			if(strncmp(msg, "Ok", 3) == 0){
-				if(write(fd_s, cnt, size) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MAX_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
+				if(writen(fd_s, cnt, size) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MAX_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
 					perror("Write del socket");
 					return -1;
 				}
@@ -683,7 +730,7 @@ int file_receiver(const char *dirname, int fd){
 	}
 
 	while(!stop){
-		
+		//ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
 		if(read(fd, msg, MSG_SIZE) == -1){ //path;sz
 			perror("read socket lato client");
 			free(msg);
@@ -702,14 +749,22 @@ int file_receiver(const char *dirname, int fd){
 			token_sz = strtok_r(NULL, ";", &tmpstr);
 				
 			if((res = isNumber(token_sz, &sz)) == 0 && sz > 0){
-				write(fd, "Ok", MSG_SIZE); //gestione
+				if(writen(fd, "Ok", MSG_SIZE) == -1){
+					perror("write api file_receiver");
+					free(msg);
+					return -1;
+				}
 		
-				if(read(fd, token_cnt, sz) == -1){ 
+				if(readn(fd, token_cnt, sz) == -1){ 
 					perror("read contenuto file");
 					free(msg);
 					return -1;
 				}
-				write(fd, "Ok", MSG_SIZE); 
+				if(writen(fd, "Ok", MSG_SIZE) == -1){
+					perror("write api file_receiver");
+					free(msg);
+					return -1;
+				} 
 		
 				if(dirname != NULL){
 					if(save_file(dirname, token_name, token_cnt, sz) == -1){
@@ -722,8 +777,12 @@ int file_receiver(const char *dirname, int fd){
 			else{
 				if(res != 0 || sz < 0)
 					fprintf(stderr, "Errore file_receiver, sz cnt inviata da server non è un numero o negativa\n");
-				write(fd, "Ok", MSG_SIZE); //gestione
-				if(read(fd, msg, sz) == -1){ 
+				if(writen(fd, "Ok", MSG_SIZE) == -1){
+					perror("write api file_receiver");
+					free(msg);
+					return -1;
+				}
+				if(readn(fd, msg, sz) == -1){ 
 					perror("read risposta server");
 					free(msg);
 					return -1;
@@ -741,7 +800,11 @@ int file_receiver(const char *dirname, int fd){
 			stop = 1; 
 		}
 	}
-	write(fd, "Ok", MSG_SIZE);
+	if(writen(fd, "Ok", MSG_SIZE) == -1){
+		perror("write api file_receiver");
+		free(msg);
+		return -1;
+	}
 	
 	free(msg);
 	

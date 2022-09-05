@@ -588,7 +588,6 @@ int write_file(char *file, char *D_removed, int found_p){
 	
 	if(openFile(file, O_LOCK) == -1){ //per scrivere apro il file con la lock 
 		if(errno == ENOENT){           //se il file non esiste ne creo uno con attiva la lock 
-			fprintf(stderr, "CI SONO\n");
 			if(openFile(file, O_CREATE_LOCK) == -1){
 				perror("Errore in openFile");
 				return -1;

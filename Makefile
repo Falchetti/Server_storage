@@ -30,7 +30,7 @@ server_4s : server_4s.o icl_hash.o queue.o
 #server_q.o : server_q.c icl_hash.h queue.h
 #	$(CC) $(CFLAGS) -c $< -o $@ -lpthread
 server_4s.o : server_4s.c icl_hash.h queue.h
-	$(CC) $(CFLAGS) -c $< -o $@ -lpthread
+	$(CC) $(CFLAGS) -c -g $< -o $@ -lpthread
 	
 queue.o : queue.c queue.h
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -61,4 +61,4 @@ test2 :
 	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
 	
 test :
-	./client -p -f /home/giulia/Server_storage/mysock -D exp -d savings -w dirw -W sasuke,itachi,sasuke -t 5 -r sasuke,itachi -R 6 -h  & ./server_4s -k config.txt
+	./client -p -f /home/giulia/Server_storage/mysock -D exp -d savings -w dirw -W sasuke,itachi,sasuke -t 5 -r sasuke,itachi -R 6 -h  & valgrind --tool=memcheck --track-origins=yes --leak-check=full ./server_4s -k config.txt 
