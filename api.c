@@ -162,7 +162,12 @@ int closeConnection(const char *sockname){
 	//non ho la certezza di sockname però 
 	if(strcmp(sockname, sck_name) == 0){ 	
 		if(fd_s != -1){ //mi assicuro che non fosse già stato chiuso (se è già stato chiuso ignoro la richiesta 
-		    if(writen(fd_s, "disconnesso", 12) == -1){//le write dovranno essere riviste (atomicità)
+		    int n = 12;
+			if(writen(fd_s, &n, sizeof(int)) == -1){//le write dovranno essere riviste (atomicità)
+				perror("Errore nella write");
+				return -1;
+			}
+			if(writen(fd_s, "disconnesso", n) == -1){//le write dovranno essere riviste (atomicità)
 				perror("Errore nella write");
 				return -1;
 			}
@@ -221,7 +226,7 @@ int openFile(const char *pathname, int flags){
 		res = comunic_cs(cmd, pathname, &err);
 		errno = err;
 		if(res < 0)
-			return res; //ATTENZIONE: guarda le specifiche delle api!!!
+			return -1; 
 	}
 	else{
 		errno = ENOTCONN;
@@ -242,7 +247,7 @@ int closeFile(const char *pathname){ //rilascia le lock!!
 		res = comunic_cs("closef", pathname, &err);
 		errno = err;
 		if(res < 0)
-			return res;
+			return -1;
 	}
 	else{
 		errno = ENOTCONN;
@@ -255,7 +260,7 @@ return 0;
 
 int readFile(const char *pathname, void **buf, size_t *size) {
 	
-	int n;
+	int sz_msg;
 	char *msg ;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
 	
@@ -268,49 +273,61 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 			fprintf(stderr,"FATAL ERROR: malloc\n");
 			exit(errno_copy);
 		}
-		
+	
 		if( msg_sender(msg, "readf", pathname, -1, NULL) == -1){
 			fprintf(stderr, "Errore in invio messaggio al server\n");
 			free(msg);
+			errno = -1;
 			return -1;
-		}
+		}			
 		
-		if(readn(fd_s, msg, MSG_SIZE) == -1){
+		free(msg);
+		
+		if(readn(fd_s, &sz_msg, sizeof(int)) == -1){
 			perror("read socket lato client");
-			free(msg);
 			return -1; 
 	    }
-		
-		if(isNumber(msg, &n) != 0){ //controlla se strstr è ok (not null terminated strings)
-			fprintf(stderr, "buff di lettura NULL, msg del server: %s\n", msg); //perchè buff di lettura null?
-			errno = -1; //come lo setto errno in questo caso???
-		}
-		if(n > 0){ //controlla se strstr è ok (not null terminated strings)
-			if(readn(fd_s, msg, n) == -1){
+		if(sz_msg > 0){
+			if((msg = malloc(sz_msg*sizeof(char))) == NULL){
+				perror("malloc");
+				int errno_copy = errno;
+				fprintf(stderr,"FATAL ERROR: malloc\n");
+				exit(errno_copy);
+			}
+			
+			if(readn(fd_s, msg, sz_msg) == -1){
 				perror("read socket lato client");
 				free(msg);
+				return -1; 
+			}
+			
+			
+			if(strstr(msg, "Err:") != NULL){ //gestisci i valori di return 
+				fprintf(stderr, "Err in readF, msg server: %s\n", msg);
+				free(msg);
+				if(strncmp(msg, "Err:fileNonEsistente", sz_msg) == 0){
+					errno = ENOENT;
+				}
+				else
+					errno = -1; //come lo setto errno in questo caso???
 				return -1;
-	        }    
-			memcpy(*buf, msg, n);
-			*size = n;
+			}
+			memcpy(*buf, msg, sz_msg);
+			*size = sz_msg;
+			fprintf(stderr, "BOH\n");
+			free(msg);
 		}
 		else{
 			*buf = NULL;
 			*size = 0;
 		}
-		
-		/*if(!errore){// qui mi sa che non ho gestito se il cnt è + grande di MSG_SIZE 
-			strcpy((char *) *buf, msg + 2); 
-			//memmove(*buf, (char *) *buf + 2, strlen((char *) *buf)); //perchè qui mmve e in altri casi direttamente *buf +2?
-			*size = strlen(*buf); //va bene?	
-		}*/
 	}
 	else{
 		errno = ENOTCONN;
 		perror("Connessione chiusa");
 		return -1;
 	}
-	free(msg);
+
 
 	return 0; 
 }
@@ -324,7 +341,7 @@ int lockFile(const char *pathname){
 		res = comunic_cs("lockf", pathname, &err);
 		errno = err;
 		if(res < 0)
-			return res;
+			return -1;
 	}
 	else{
 		errno = ENOTCONN;
@@ -344,7 +361,7 @@ int unlockFile(const char *pathname){
 		res = comunic_cs("unlockf", pathname, &err);
 		errno = err;
 		if(res < 0)
-			return res;
+			return -1;
 	}
 	else{
 		errno = ENOTCONN;
@@ -362,7 +379,7 @@ int writeFile(const char *pathname, const char* dirname) {
 	FILE *fp;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
 	struct stat st;
-	int size, n;
+	int size, n, msg_sz;
 
 	
 	if(fd_s != -1){ //controllo se sono connesso 
@@ -387,7 +404,7 @@ int writeFile(const char *pathname, const char* dirname) {
 		n = fread(cnt, 1, size, fp);
 		
         if(!n){
-			if (ferror(fp)){    
+			if (ferror(fp)){  
 				perror("fread");
         		free(msg);
 				return -1;
@@ -399,6 +416,7 @@ int writeFile(const char *pathname, const char* dirname) {
 		if(msg_sender(msg, "writef", pathname, size, cnt) == -1){
 			fprintf(stderr, "Errore in invio messaggio al server\n");
 			free(msg);
+			errno = -1;
 			return -1;
 		}
 			
@@ -407,16 +425,21 @@ int writeFile(const char *pathname, const char* dirname) {
 		
 		if(n == -1){
 			free(msg);
+			errno = -1;
 			return 0; //vedi come gestirlo 
 		}
-	
-		if(readn(fd_s, msg, 3) == -1){ //ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
+		if(readn(fd_s, &msg_sz, sizeof(int)) == -1){ 
+			perror("read socket lato client");
+			free(msg);
+			return -1;
+	    }
+		if(readn(fd_s, msg, msg_sz) == -1){ 
 			perror("read socket lato client");
 			free(msg);
 			return -1;
 	    }
 		
-		if(strcmp(msg, "Ok") != 0){ 
+		if(strncmp(msg, "Ok", msg_sz) != 0){ 
 			fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
 		    errno = -1; //come lo setto errno in questo caso???
 			free(msg);
@@ -439,7 +462,7 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char* dirna
 	
 	char *msg;
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
-	int k;  
+	int k, msg_sz;  
 	
 	if(fd_s != -1){ //controllo se sono connesso 
 		
@@ -453,24 +476,33 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char* dirna
 		if(msg_sender(msg, "appendTof", pathname, size, buf) == -1){
 			fprintf(stderr, "Errore in invio messaggio al server\n");
 			free(msg);
+			errno = -1;
 			return -1;
 		}
 		
 		k = file_receiver(dirname, fd_s); 
 
 		
-		if(k == -1)
+		if(k == -1){
+			free(msg);
+			errno = -1;
 			return 0; //vedi come gestirlo 
+		}
 		
-		if(readn(fd_s, msg, 3) == -1){//ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
+		if(readn(fd_s, &msg_sz, sizeof(int)) == -1){ 
+			perror("read socket lato client");
+			free(msg);
+			return -1;
+	    }
+		if(readn(fd_s, msg, msg_sz) == -1){
 			perror("read socket lato client");
 			free(msg);
 			return -1;
 	    }
 		
-		if(strcmp(msg, "Ok") != 0){
+		if(strncmp(msg, "Ok", msg_sz) != 0){
 			fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
-			errno = -1; //come lo setto errno in questo caso???
+			errno = -1; 
 			free(msg);
 			return -1;
 		}
@@ -489,8 +521,7 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char* dirna
 int readNFile(int n, const char *dirname){  //su client hai funzione che salva file in directory, vedi se spostarla qui 
 	
 	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0
-	int k;
-	char str[MAX_SIZE/10+2]; //cambiare
+	int k, msg_sz;
 	char *msg;
 	
 	if(fd_s != -1){ //ci pensa il server ad aprire e chiudere i file in questo caso 
@@ -500,23 +531,63 @@ int readNFile(int n, const char *dirname){  //su client hai funzione che salva f
 			fprintf(stderr,"FATAL ERROR: malloc\n");
 			exit(errno_copy);
 		}
+
+		char *str;
+		if((str = malloc(MSG_SIZE*sizeof(char))) == NULL){
+			perror("malloc");
+			int errno_copy = errno;
+			fprintf(stderr,"FATAL ERROR: malloc\n");
+			exit(errno_copy);
+		}
+		memset(str, 0, MSG_SIZE); //da aggiustare, meglio usare un protocollo che comunica al client la lunghezza del buffer da leggere
+
 		
-		snprintf(str, MAX_SIZE/10+2, "%d", n);	
+		int bufsz = snprintf(NULL, 0, "%d",n);
+		snprintf(str, bufsz+1, "%d", n);
+		
 		if(msg_sender(msg, "readNf", str, -1, NULL) == -1){
 			fprintf(stderr, "Errore in invio messaggio al server\n");
 			free(msg);
+			free(str);
+			errno = -1;
 			return -1;
 		}
-		k = file_receiver(dirname, fd_s);			
+		k = file_receiver(dirname, fd_s);	
+		free(str);
+		
+		if(k < 0){
+			free(msg);
+			errno = -1;
+			return -1;
+		}
+		if(readn(fd_s, &msg_sz, sizeof(int)) == -1){ 
+			perror("read socket lato client");
+			free(msg);
+			return -1;
+	    }
+		if(readn(fd_s, msg, msg_sz) == -1){ 
+			perror("read socket lato client");
+			free(msg);
+			return -1;
+	    }
+		
+		if(strncmp(msg, "Ok", msg_sz) != 0){ 
+			fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
+		    errno = -1; 
+			free(msg);
+			return -1;
+		}
+	
 	}
 	else{
 		errno = ENOTCONN;
 		perror("Connessione chiusa");
 		return -1;
 	}
-	
+
 	free(msg);
-	return k; //ATTENZIONE: specifiche api 
+	
+	return k; //Da specifiche: restituisco il numero di file letti 
 }
 
 
@@ -529,7 +600,7 @@ int removeFile(const char *pathname){
 		res = comunic_cs("removef", pathname, &err);
 		errno = err;
 		if(res < 0)
-			return res;
+			return -1;
 	}
 	else{
 		errno = ENOTCONN;
@@ -542,7 +613,7 @@ int removeFile(const char *pathname){
 
 
 int save_file(const char *dir, char *file, char *buff, int size){
-	
+
 	char *path_file;
 	struct stat st = {0};
 	
@@ -605,33 +676,41 @@ int save_file(const char *dir, char *file, char *buff, int size){
 
 int comunic_cs(char *cmd, const char *pathname, int *err){
 	char *msg;
+	int n;
 	
-	if((msg = malloc(MAX_SIZE*sizeof(char))) == NULL){
+	if((msg = malloc(MSG_SIZE*sizeof(char))) == NULL){
 		perror("malloc");
 		int errno_copy = errno;
 		fprintf(stderr,"FATAL ERROR: malloc\n");
 		exit(errno_copy);
 	}
+	memset(msg, '\0', MSG_SIZE);
 	
 	if(msg_sender(msg, cmd, pathname, -1, NULL) == -1){
 		fprintf(stderr, "Errore in invio messaggio al server\n");
-		*err = -1; //come lo setto errno in questo caso???
+		*err = -1; 
+		free(msg);
+		return -1;
+	}
+	if(read(fd_s, &n, sizeof(int)) == -1){  
+		perror("read socket lato client");
+		*err = errno;
 		free(msg);
 		return -1;
 	}
 
-	if(read(fd_s, msg, MSG_SIZE) == -1){  //ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
+	if(read(fd_s, msg, n) == -1){ 
 		perror("read socket lato client");
 		*err = errno;
 		free(msg);
 		return -1;
 	}
 			
-	if(strncmp(msg, "Ok", 3) != 0){ //gestisci i valori di return 
+	if(strncmp(msg, "Ok", n) != 0){ //gestisci i valori di return 
 		if(strstr(msg, "fail") != NULL){ //o fatal, da decidere
 			*err = -1;//come lo setto errno in questo caso???
 		}
-		else if(strncmp(msg, "Err:fileNonEsistente", MSG_SIZE) == 0){
+		else if(strncmp(msg, "Err:fileNonEsistente", n) == 0){
 			*err = ENOENT;
 		}
 		else
@@ -648,62 +727,47 @@ int comunic_cs(char *cmd, const char *pathname, int *err){
 int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt){
 	
 	//int num_w = 0;
-	char str[MAX_SIZE/10+2]; //mah, controlla se va bene 
+
 	
-	
-	
-	strncpy(msg, cmd, MAX_SIZE - 1); //so la taglia max dei cmd no null-terminated problem
+	strncpy(msg, cmd, MSG_SIZE - 1); //so la taglia max dei cmd no null-terminated problem
 	strcat(msg, ";"); //come sopra (non voglio appesantire il codice)
 	
 	if(path != NULL){
-		strncat(msg, path, MAX_SIZE - strlen(msg) -1); //strncat aggiunge sempre \0 in fondo
-		strncat(msg, ";", MAX_SIZE - strlen(msg) -1);
-		if(size == -1)
-			snprintf(str, MAX_SIZE/10+2, "%d", -1);
-		else
-			snprintf(str, MAX_SIZE/10+2, "%d", size);
-		strncat(msg, str, MAX_SIZE - strlen(msg) -1);
+		char *str;
+		if((str = malloc(MSG_SIZE*sizeof(char))) == NULL){
+			perror("malloc");
+			int errno_copy = errno;
+			fprintf(stderr,"FATAL ERROR: malloc\n");
+			exit(errno_copy);
+		}
+		memset(str, 0, MSG_SIZE); //da aggiustare, meglio usare un protocollo che comunica al client la lunghezza del buffer da leggere
 		
+		strncat(msg, path, MSG_SIZE - strlen(msg) -1); //strncat aggiunge sempre \0 in fondo
+		strncat(msg, ";", MSG_SIZE - strlen(msg) -1);
 		
-		if(writen(fd_s, msg, MSG_SIZE) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MAX_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
-			perror("Write del socket");
+		int bufsz = snprintf(NULL, 0, "%d",size);
+		snprintf(str, bufsz+1, "%d", size);
+		
+		strncat(msg, str, MSG_SIZE - strlen(msg) -1);
+		
+		int n = strlen(msg) + 1;
+		if(writen(fd_s, &n, sizeof(int)) == -1){//le write dovranno essere riviste (atomicità)
+			perror("Errore nella write");
+			free(str);
 			return -1;
 		}
-		if(size > 0){ //ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
-			if(readn(fd_s, msg, 3) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MAX_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
-				perror("read del socket");
-				return -1;
-			}
-			if(strncmp(msg, "Ok", 3) == 0){
-				if(writen(fd_s, cnt, size) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MAX_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
-					perror("Write del socket");
-					return -1;
-				}
-			}
-			else{
-				fprintf(stderr, "Errore ricezione messaggio dal server\n");
-				return -1;
-			}
-		}	
-		
-		
-		//strncat(msg, ";$", MAX_SIZE - strlen(msg) -1); //carattere finale, serve??
-		
-		/*if((num_w = write(fd_s, msg, MSG_SIZE)) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MAX_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
+		if(writen(fd_s, msg, n) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MSG_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
 			perror("Write del socket");
+			free(str);
 			return -1;
-		}		  
-		else {
-			while(num_w < strlen(msg) + 1){ //LA PARTE DEL CONTENUTO DEI FILE TROPPO GRANDE E' DA AGGIUSTARE
-				msg = msg + MSG_SIZE;
-				if((num_w = write(fd_s, msg, MSG_SIZE)) == -1){
-					perror("Write del socket2");
-					return -1;
-				}
-			}
-		}*/
-		
-		
+		}
+		free(str);
+		if(size > 0){ //ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
+			if(writen(fd_s, cnt, size) == -1){ //AGGIUSTA QUESTA COSA DI MSG_SIZE E MSG_SIZE A SECONDA DEL TEMPO CHE HAI A DISPOSIZIONE
+				perror("Write del socket");
+				return -1;
+			}	
+		}
 	}
 	else{
 		fprintf(stderr, "path NULL in msg_sender\n");
@@ -717,97 +781,74 @@ int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt){
 int file_receiver(const char *dirname, int fd){
 
 	int stop = 0;
-	char *token_name, token_cnt[MAX_SIZE], *token_sz, *tmpstr; //devo allocare spazio per loro?
-	char *msg;
+	char *path, *cnt = NULL;
 	int k = 0;
-	int sz,res;
+	int sz_msg;
 	
-	if((msg = malloc(MAX_SIZE*sizeof(char))) == NULL){
-		perror("malloc");
-		int errno_copy = errno;
-		fprintf(stderr,"FATAL ERROR: malloc\n");
-		exit(errno_copy);
-	}
 
 	while(!stop){
-		//ATTENZIONE, PER USARE READ_N E WRITE_N E' NECESSARIO AVERE LA STESSA SIZE TRA READ E WRITE MI SA
-		if(read(fd, msg, MSG_SIZE) == -1){ //path;sz
+		
+		if(readn(fd, &sz_msg, sizeof(int)) == -1){ 
 			perror("read socket lato client");
-			free(msg);
+			return -1;
+		}
+		if((path = malloc(sz_msg*sizeof(char))) == NULL){
+			perror("malloc");
+			int errno_copy = errno;
+			fprintf(stderr,"FATAL ERROR: malloc\n");
+			exit(errno_copy);
+		}
+		if(readn(fd, path, sz_msg) == -1){ //path o $ o Err 
+			perror("read socket lato client");
+			free(path);
 			return -1;
 		}
 		
-		if(strstr(msg, "Err:") != NULL){ //controlla se va bene 
-			fprintf(stderr, "MESSAGGIO: %s\n", msg);
-			free(msg);
+		if(strstr(path, "Err:") != NULL){ //controlla se va bene 
+			fprintf(stderr, "MESSAGGIO: %s\n", path);
+			free(path);
 			return -1;
 		}
-	
-		token_name = strtok_r(msg, ";", &tmpstr);
-		if(strncmp(token_name, "$", UNIX_PATH_MAX) != 0){
+
+		if(strncmp(path, "$", UNIX_PATH_MAX) != 0){
 			k++;
-			token_sz = strtok_r(NULL, ";", &tmpstr);
-				
-			if((res = isNumber(token_sz, &sz)) == 0 && sz > 0){
-				if(writen(fd, "Ok", MSG_SIZE) == -1){
-					perror("write api file_receiver");
-					free(msg);
-					return -1;
-				}
-		
-				if(readn(fd, token_cnt, sz) == -1){ 
-					perror("read contenuto file");
-					free(msg);
-					return -1;
-				}
-				if(writen(fd, "Ok", MSG_SIZE) == -1){
-					perror("write api file_receiver");
-					free(msg);
-					return -1;
-				} 
-		
-				if(dirname != NULL){
-					if(save_file(dirname, token_name, token_cnt, sz) == -1){
-						fprintf(stderr, "Errore in savefile\n");
-						free(msg);
-						return -1;
-					}
-				}
+			
+			if(readn(fd, &sz_msg, sizeof(int)) == -1){ //
+				perror("read socket lato client");
+				free(path);
+				return -1;
 			}
-			else{
-				if(res != 0 || sz < 0)
-					fprintf(stderr, "Errore file_receiver, sz cnt inviata da server non è un numero o negativa\n");
-				if(writen(fd, "Ok", MSG_SIZE) == -1){
-					perror("write api file_receiver");
-					free(msg);
+			if(sz_msg > 0){
+				if((cnt = malloc(sz_msg*sizeof(char))) == NULL){
+					perror("malloc");
+					int errno_copy = errno;
+					fprintf(stderr,"FATAL ERROR: malloc\n");
+					free(path);
+					exit(errno_copy);
+				}
+				if(readn(fd, cnt, sz_msg) == -1){ //cnt
+					perror("read socket lato client");
+					free(path);
 					return -1;
 				}
-				if(readn(fd, msg, sz) == -1){ 
-					perror("read risposta server");
-					free(msg);
+			}		
+			if(dirname != NULL){
+				if(save_file(dirname, path, cnt, sz_msg) == -1){
+					fprintf(stderr, "Errore in savefile\n");
+					free(path);
+					//if(cnt) se lo libero mi dà double free, lo sto liberando nel server   
+						//free(cnt);
 					return -1;
-				}
-				if(dirname != NULL){
-					if(save_file(dirname, token_name, NULL, 0) == -1){
-						fprintf(stderr, "Errore in savefile\n");
-						free(msg);
-						return -1;
-					}
 				}
 			}	
 		}
 		else{
 			stop = 1; 
 		}
+		free(path);
+		//if(cnt)
+			//free(cnt);
 	}
-	if(writen(fd, "Ok", MSG_SIZE) == -1){
-		perror("write api file_receiver");
-		free(msg);
-		return -1;
-	}
-	
-	free(msg);
-	
 	return k;
 }
 			

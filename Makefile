@@ -57,8 +57,12 @@ cleanall :
 	-rm -f *.o *.~ 
 	
 #questo test probabilmente sarà sostituito con uno script 
-test2 : 
-	./client -f /home/giulia/Server_storage/mysock -r pippo,minnie -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
+test : 
+	./client -p -f /home/giulia/Server_storage/mysock -t 200 -D exp -d savings -w dirw -W sasuke,itachi,sasuke -r sasuke,itachi -R 6 -l itachi -c itachi -l sasuke -u sasuke -h  & valgrind --tool=memcheck --track-origins=yes --leak-check=full --show-leak-kinds=all ./server_4s -k config.txt  
 	
-test :
-	./client -p -f /home/giulia/Server_storage/mysock -D exp -d savings -w dirw -W sasuke,itachi,sasuke -t 5 -r sasuke,itachi -R 6 -h  & valgrind --tool=memcheck --track-origins=yes --leak-check=full ./server_4s -k config.txt 
+test2 :
+	./client -p -f /home/giulia/Server_storage/mysock -D exp -d savings -w dirw -W sasuke,itachi,sasuke -t 5 -r sasuke,itachi -R 6 -h  & valgrind --tool=memcheck --track-origins=yes --leak-check=full --show-leak-kinds=all ./server_4s -k config.txt 
+	
+test1 : $(TARGETS)
+	#chmod +x ./script_t1.sh 
+	bash ./script_t1.sh &

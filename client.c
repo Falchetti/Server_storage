@@ -62,6 +62,7 @@ void print_p(char *op, char *file[], int n_files, int esito, int rB, int wB);
 int main(int argc, char *argv[]){
 	
 	int flag, n, res;
+	int errore = 0;
 
 	char *d_read = NULL;
 	char *D_removed = NULL;
@@ -76,7 +77,7 @@ int main(int argc, char *argv[]){
 	
 	struct timespec ts = {0};
 
-	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:p")) != -1) && !found_h ){ //fai controllo su getopt per la questione R arg opzionale
+	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:pb:")) != -1) && !found_h && !errore){ //fai controllo su getopt per la questione R arg opzionale
 		
 		#ifdef DEBUG2
 			printf("found_r = %d, found_w = %d, found_p = %d\n", found_r, found_w, found_p);
@@ -128,7 +129,47 @@ int main(int argc, char *argv[]){
 	
 				break;
 				
+			case 'b' : 
+				if(socket_name != NULL){
+					char *buff;
+					if((buff = malloc(SZ_STRING*sizeof(char))) == NULL){
+							perror("malloc");
+							int errno_copy = errno;
+							fprintf(stderr,"FATAL ERROR: malloc\n");
+							exit(errno_copy);
+						} 
+					memset(buff, '\0', SZ_STRING); 
+			
+					size_t sz;
+					if(openFile(optarg, 3) == -1)
+						perror("prova openFile");
+					if(writeFile(optarg, d_read) == -1)
+						perror("prova writeFile");
+					if(readFile(optarg, &buff, &sz) == -1)
+						perror("prova readFile");
+					if(sz > 0)
+						fprintf(stderr, "buff è:%s, sz è: %d\n", buff, sz);
+					if(openFile(optarg, 1) == -1)
+						perror("prova openFile");
+					if(openFile(optarg, 0) == -1)
+						perror("prova openFile");
+					if(openFile(optarg, 2) == -1)
+						perror("prova openFile");
+					if(lockFile(optarg) == -1)
+						perror("prova lockFile");
+					if(unlockFile(optarg) == -1)
+						perror("prova unlockFile");
+					if(closeFile(optarg) == -1)
+						perror("prova closeFile");
+					if(lockFile(optarg) == -1)
+						perror("prova lockFile");
+				}
+				else
+					fprintf(stderr, "no socket\n");
+				break;
+				
 			case 'w' : 
+				
 				found_w = 1;
 					
 				if(socket_name != NULL){ //mi assicuro la connessione sia aperta 
@@ -146,14 +187,14 @@ int main(int argc, char *argv[]){
 					struct stat st = {0}; //azzero la struct 
 
 					if (stat(dir, &st) == -1){
-						perror("directory non esistente"); //non so se va bene come mess d'errore 
-						return -1;
+						perror("directory non esistente, impossibile inoltrare richiesta [-w]\n"); //non so se va bene come mess d'errore 
+						break;
 					}
 					else{
 						if(!S_ISDIR(st.st_mode)){
-							fprintf(stderr, "%s non e' una directory\n", dir);
+							fprintf(stderr, "%s non e' una directory, impossibile inoltrare richiesta [-w]\n", dir);
 							errno = ENOTDIR;
-							return -1;
+							break;
 						} 
 					}
 					
@@ -167,9 +208,8 @@ int main(int argc, char *argv[]){
 						lsR(dir, &err, &n, 1, D_removed, found_p);
 					
 					if(err != 0){
-						fprintf(stderr, "errore ricorsione directory\n");
-						errno = -1;  //DA CAMBIARE, forse dovrei far galleggiare gli errno interni, ma è complicato 
-						return -1;
+						fprintf(stderr, "errore ricorsione directory, errore nell'inoltrare richiesta [-w]\n");
+						errore = 1;
 					}
 					
 					//CONTROLLA SULLE SLIDE QUESTA PARTE 
@@ -208,8 +248,7 @@ int main(int argc, char *argv[]){
 					token = strtok_r(optarg, ",", &tmpstr); 
 					while (token) {
 						if(write_file(token, D_removed, found_p) == -1){
-							fprintf(stderr, "Errore  nella scrittura dei file richiesti\n");
-							return -1;
+							fprintf(stderr, "Errore  nella scrittura del file richiesto: %s [-W]\n", token);
 						}
 						token = strtok_r(NULL, ",", &tmpstr);	
 					}
@@ -240,9 +279,9 @@ int main(int argc, char *argv[]){
 					token = strtok_r(optarg, ",", &tmpstr);
 					
 					while (token) {
-						if(openFile(token, O_LOCK) == -1){ //Mh, forse se il file non esite, dovrei passare al file successivo senza interrompere? 
-							perror("Errore in openFile");
-							return -1;                               //attenzione che questi return -1 non saltino i cleanup necessari
+						if(openFile(token, O_LOCK) == -1){ 
+							perror("Errore in openFile [-r]");
+							continue;                               
 						}
 						char *buff;
 						size_t size;
@@ -253,6 +292,7 @@ int main(int argc, char *argv[]){
 							fprintf(stderr,"FATAL ERROR: malloc\n");
 							exit(errno_copy);
 						} 
+						memset(buff, '\0', SZ_STRING); 
 						
 						res = readFile(token,  (void *) &buff, &size);
 						
@@ -260,9 +300,10 @@ int main(int argc, char *argv[]){
 							print_p("Read file", &token, 1, res, size, -1);
 						
 						if(res == -1){
-							perror("Errore in readFile");
+							perror("Errore in readFile [-r]");
 							free(buff);
-							return -1;
+							token = strtok_r(NULL, ",", &tmpstr);
+							continue;
 						} 
 						
 						#ifdef DEBUG
@@ -276,20 +317,16 @@ int main(int argc, char *argv[]){
 						
      					if(d_read != NULL)
 							if(save_file(d_read, token, buff, size) == -1){
-								//serve una stampa?
+								fprintf(stderr, "si è verificato un errore nel salvataggio di: %s [-r]\n", token);
 								free(buff);
-								return -1;
 							}
 						
 						if (closeFile(token) == -1){
-							perror("Errore in closeFile");
-							return -1;
+							perror("Errore in closeFile [-r]");
 						}
 						
 						token = strtok_r(NULL, ",", &tmpstr);
-						free(buff); //ha senso dentro al while?
-						
-						
+						free(buff); 				
 					}
 				}
 				
@@ -303,15 +340,15 @@ int main(int argc, char *argv[]){
 			case 'R' :  //non riesco a farlo funzionare con argomento opzionale (problema bash credo, non posso usare la forma :R::, guarda sulla virtual machine se va )
 				if(optarg != NULL){
 					if(isNumber(optarg, &n) != 0){
-						fprintf(stderr,"L'argomento di R deve essere un numero\n");
-						return -1;
+						fprintf(stderr,"L'argomento di R deve essere un numero [-R] \n");
+						break;
 					}	
 	            }
 				else 
 					n = 0;
 				res = readNFile(n, d_read);
 				if(res == -1)
-					perror("Errore in readNFiles");  //ho tolto il return -1
+					perror("Errore in readNFiles");  
 				
 				if(found_p){
 					if(res != -1)
@@ -336,7 +373,6 @@ int main(int argc, char *argv[]){
 				break;
 				
 			case 't' : 
-				//fprintf(stderr, "----------------- t: %s------------------\n", optarg);
 				if(isNumber(optarg, &n) == 0 && n >= 0){
 					res = 1;
 					//t = n;
@@ -345,8 +381,7 @@ int main(int argc, char *argv[]){
 				}
 				else{
 					res = -1;
-					fprintf(stderr, "argomento di -t errato\n");
-					//t = 0;
+					fprintf(stderr, "argomento di -t errato [-t] \n");
 				}
 				if(found_p)
 						print_p("Specifica tempo di attesa tra due richieste", NULL, 0, res, -1, -1);
@@ -362,13 +397,13 @@ int main(int argc, char *argv[]){
 						if(found_p)
 							print_p("Lock file", &token, 1, res, -1, -1);
 						if(res == -1){
-							perror("Errore in lockFile");
+							perror("Errore in lockFile [-l]");
 						}
 						token = strtok_r(NULL, ",", &tmpstr);	
 					}
 				}
 				else{ 
-					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
+					fprintf(stderr, "connessione non ancora aperta, socket non specificato\n");
 					return -1;
 				} 
 				
@@ -382,7 +417,7 @@ int main(int argc, char *argv[]){
 					
 						res = unlockFile(token);
 						if(res == -1){
-							perror("Errore in unlockFile"); //che succede se non interrompo? (ho tolto il return -1)
+							perror("Errore in unlockFile [-u]"); //che succede se non interrompo? (ho tolto il return -1)
 						}
 						if(found_p)
 							print_p("Unock file", &token, 1, res, -1, -1);
@@ -405,13 +440,16 @@ int main(int argc, char *argv[]){
 					while (token) { //ho scelto che per fare la lock non devo aprire il file 
 					 
 						if(lockFile(token) == -1){
-							perror("Errore in lockFile");
-							return -1;
+							perror("Errore in lockFile [-c]");
+							if(found_p)
+								print_p("Remove file", &token, 1, -1, -1, -1);
+							token = strtok_r(NULL, ",", &tmpstr);
+							continue;
 						}
 						res = removeFile(token);
 						
 						if(res == -1){
-							perror("Errore in removeFile"); //che succede se non interrompo? (ho tolto il return -1)
+							perror("Errore in removeFile"); 
 						}
 						if(found_p)
 							print_p("Remove file", &token, 1, res, -1, -1);
@@ -440,7 +478,7 @@ int main(int argc, char *argv[]){
 				
 				break;
 			
-			default:  //'?'
+			default:  
 		        printf("flag non riconosciuto [-%c], usare -h per richiedere la lista di flag disponibili\n", (char) flag);
 		}
 		do {
@@ -590,6 +628,9 @@ int write_file(char *file, char *D_removed, int found_p){
 		if(errno == ENOENT){           //se il file non esiste ne creo uno con attiva la lock 
 			if(openFile(file, O_CREATE_LOCK) == -1){
 				perror("Errore in openFile");
+				if(found_p){
+					print_p("Write File", &file, 1, -1, -1, -1);
+				}
 				return -1;
 			}
 			res = writeFile(file, D_removed);
@@ -612,13 +653,19 @@ int write_file(char *file, char *D_removed, int found_p){
 		}
 		else {
 			perror("Errore in openFile");
-			return -1;                      //attenzione che questi return -1 non saltino i cleanup necessari
+			if(found_p){
+				print_p("Write File", &file, 1, -1, -1, -1);
+			}
+			return -1;                      
 		}
 	}
 	else {   //se esite scrivo in append 
 		
 		if((fp = fopen(file, "rb")) == NULL){
 			perror("errore fopen");
+			if(found_p){
+				print_p("Append to File", &file, 1, -1, -1, -1);
+			}
 			return -1;
 		}
 		
@@ -632,14 +679,22 @@ int write_file(char *file, char *D_removed, int found_p){
 			if (ferror(fp)){    
 				perror("fread");
 				fclose(fp);
+				if(found_p){
+					print_p("Write File", &file, 1, -1, -1, -1);
+				}
         		return -1;
 			}
 		}
 		
 		fclose(fp);
 		
-		if(appendToFile(file, buff, size, D_removed) == -1){ 
-			perror("Errore in writeFile");
+		res = appendToFile(file, buff, size, D_removed);
+		
+		if(found_p){
+			print_p("Append To File", &file, 1, res, -1, size);
+		}
+		if(res == -1){
+			perror("Errore in appendToFile");
 			return -1;
 		}
 		
@@ -647,6 +702,9 @@ int write_file(char *file, char *D_removed, int found_p){
 	
 	if (closeFile(file) == -1){
 		perror("Errore in closeFile");
+		if(found_p){
+			print_p("Append To File", &file, 1, -1, -1, -1);
+		}
 		return -1;
 	}
 	

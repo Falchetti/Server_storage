@@ -57,6 +57,8 @@ void deleteQueue(Queue_t *q) {
     while(q->head != q->tail) {
 	Node_t *p = (Node_t*)q->head;
 	q->head = q->head->next;
+	if(p->data)
+		free(p->data);
 	freeNode(p);
     }
     if (q->head) freeNode((void*)q->head);
