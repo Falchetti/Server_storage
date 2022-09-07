@@ -13,7 +13,7 @@
 #undef DEBUG
 
 #define UNIX_PATH_MAX 108
-#define MAX_SIZE 230
+#define MAX_SIZE 10000
 
 //controlla se hai effettivamente risolto problema contenuto binario
 //risolvi definitivamente MAX SIZE - MSG SIZE etc (versione più semplice, poi dopo rifinisci)
@@ -281,6 +281,8 @@ int main(int argc, char *argv[]){
 					while (token) {
 						if(openFile(token, O_LOCK) == -1){ 
 							perror("Errore in openFile [-r]");
+									fprintf(stderr, "file: %s\n", token);
+							token = strtok_r(NULL, ",", &tmpstr);
 							continue;                               
 						}
 						char *buff;
@@ -318,7 +320,6 @@ int main(int argc, char *argv[]){
      					if(d_read != NULL)
 							if(save_file(d_read, token, buff, size) == -1){
 								fprintf(stderr, "si è verificato un errore nel salvataggio di: %s [-r]\n", token);
-								free(buff);
 							}
 						
 						if (closeFile(token) == -1){

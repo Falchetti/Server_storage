@@ -1,15 +1,17 @@
+SHELL = /bin/bash
+
 CC = gcc 
 
 #qui da aggiungere c99 
-CFLAGS = -Wall -pedantic 
+CFLAGS = -Wall -pedantic -std=c99 -Werror -g
 
 #TARGETS = server client clean test
-TARGETS = server_4s client clean test 
+TARGETS = server_4s client clean test1
 
 #genera tutti gli eseguibili
-all	: $(TARGETS) 
+all : $(TARGETS) 
 
-.PHONY : clean, test, cleanall
+.PHONY : clean, test1, cleanall
 
 #server : server.o icl_hash.o 
 #	$(CC) $(CFLAGS) $^ -o $@
@@ -57,12 +59,18 @@ cleanall :
 	-rm -f *.o *.~ 
 	
 #questo test probabilmente sarà sostituito con uno script 
-test : 
-	./client -p -f /home/giulia/Server_storage/mysock -t 200 -D exp -d savings -w dirw -W sasuke,itachi,sasuke -r sasuke,itachi -R 6 -l itachi -c itachi -l sasuke -u sasuke -h  & valgrind --tool=memcheck --track-origins=yes --leak-check=full --show-leak-kinds=all ./server_4s -k config.txt  
+test3 : 
+	./client -f /home/giulia/Server_storage/mysock -W pippo,sasuke -r pluto -f sock -r paperondepaperoni -l pippo,minnie -l pluto -u pluto -h & ./server
+# --tool=memcheck --track-origins=yes	--show-leak-kinds=all
 	
-test2 :
-	./client -p -f /home/giulia/Server_storage/mysock -D exp -d savings -w dirw -W sasuke,itachi,sasuke -t 5 -r sasuke,itachi -R 6 -h  & valgrind --tool=memcheck --track-origins=yes --leak-check=full --show-leak-kinds=all ./server_4s -k config.txt 
+test1 : 
+	valgrind --leak-check=full ./server_4s -k config1.txt &
+	chmod +x test_1.sh 
+	./test_1.sh
+	killall -s SIGHUP memcheck-amd64-
+
+test2 : 
+	./server_4s -k config.txt  &
+	./script_test.sh
+	kill -SIGHUP `pidof server_4s`
 	
-test1 : $(TARGETS)
-	#chmod +x ./script_t1.sh 
-	bash ./script_t1.sh &
