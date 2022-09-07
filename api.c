@@ -23,12 +23,20 @@
 #define O_LOCK 2
 #define O_CREATE_LOCK 3 
 
-/** Evita letture parziali
- *
- *   \retval -1   errore (errno settato)
- *   \retval  0   se durante la lettura da fd leggo EOF
- *   \retval size se termina con successo
- */
+
+
+
+int fd_s = -1; //fd socket
+char sck_name[UNIX_PATH_MAX]; //nome del socket
+
+
+int isTimeout(struct timespec, struct timespec);  
+int save_file(const char *dir, char *file, char *buff, int n);
+int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt);
+int isNumber(void *el, int *n);
+int file_receiver(const char *dirname, int fd);
+int comunic_cs(char *cmd, const char *pathname, int *err);
+
 static inline int readn(long fd, void *buf, size_t size) {
     size_t left = size;
     int r;
@@ -48,12 +56,6 @@ static inline int readn(long fd, void *buf, size_t size) {
     return size;
 }
 
-/** Evita scritture parziali
- *
- *   \retval -1   errore (errno settato)
- *   \retval  0   se durante la scrittura la write ritorna 0
- *   \retval  1   se la scrittura termina con successo
- */
 static inline int writen(long fd, void *buf, size_t size) {
     size_t left = size;
     int r;
@@ -69,23 +71,6 @@ static inline int writen(long fd, void *buf, size_t size) {
     }
     return 1;
 }
-
-
-//forse i define li devi mettere in api.h, leggi commento su client.c  
-
-//usare scelta coerente per strcmp , strcat e strcpy
-
-int fd_s = -1; //fd socket
-char sck_name[UNIX_PATH_MAX]; //nome del socket
-
-
-//forse ha senso metterle direttamente in api.h
-int isTimeout(struct timespec, struct timespec);  
-int save_file(const char *dir, char *file, char *buff, int n);
-int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt);
-int isNumber(void *el, int *n);
-int file_receiver(const char *dirname, int fd);
-int comunic_cs(char *cmd, const char *pathname, int *err);
 
 //non devo controllare che la connessione sia stata già aperta
 //perchè -f lo posso chiamare solo una volta e solo lì invoco openConnection
@@ -108,10 +93,10 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 	sa.sun_family = AF_UNIX;
 	
 	while ( (connect(fd_s, (struct sockaddr *) &sa, sizeof(sa)) == -1) && ((t = isTimeout(time, abstime)) == 0) )
-		sleep(msec/1000); //è attesa attiva? 
+		sleep(msec/1000); 
 			
 	if (t){
-		errno = ETIMEDOUT; //forse dovrei lasciare l'errno settato da connect 
+		errno = ETIMEDOUT; 
 		perror("Errore, timeout sopraggiunto");
 		return -1;
 	}			
@@ -143,8 +128,7 @@ int isTimeout(struct timespec a, struct timespec b){
         return 0;
 }
 
-//per evitare race conditions attenzione a non chiudere 
-//file descriptor se sono usati da altri threads nello stesso processo
+
 int closeConnection(const char *sockname){
 	errno = 0;
 
@@ -179,7 +163,7 @@ int closeConnection(const char *sockname){
 int openFile(const char *pathname, int flags){ 
 	
 	char *cmd;
-	errno = 0; //controlla se è ok questa cosa di inizializzare errno a 0 
+	errno = 0;
 	
 	
 	if(fd_s != -1){ //la connessione è aperta? (Il server controllerà se il file sia già stato aperto o meno)
@@ -226,7 +210,7 @@ int openFile(const char *pathname, int flags){
 		
 }
 
-int closeFile(const char *pathname){ //rilascia le lock!! davvero? 
+int closeFile(const char *pathname){ 
 
 	errno = 0; 
 						
@@ -290,14 +274,14 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 			}
 			
 			
-			if(strstr(msg, "Err:") != NULL){ //gestisci i valori di return 
+			if(strstr(msg, "Err:") != NULL){ 
 				fprintf(stderr, "Err in readF, msg server: %s\n", msg);
 				free(msg);
 				if(strncmp(msg, "Err:fileNonEsistente", sz_msg) == 0){
 					errno = ENOENT;
 				}
 				else
-					errno = -1; //come lo setto errno in questo caso???
+					errno = -1; 
 				return -1;
 			}
 			memcpy(*buf, msg, sz_msg);
@@ -378,7 +362,7 @@ int writeFile(const char *pathname, const char* dirname) {
 			exit(errno_copy);
 		}
 		
-		if((fp = fopen(pathname, "rb")) == NULL){ //Se il file non esiste si esce con errore
+		if((fp = fopen(pathname, "rb")) == NULL){ 
 			perror("errore nella fopen"); 
             free(msg);
             return -1;
@@ -414,7 +398,7 @@ int writeFile(const char *pathname, const char* dirname) {
 		if(n < 0){
 			free(msg);
 			errno = -1;
-			return -1; //vedi come gestirlo 
+			return -1; 
 		}
 		if(readn(fd_s, &msg_sz, sizeof(int)) == -1){ 
 			perror("read socket lato client");
@@ -474,7 +458,7 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char* dirna
 		if(k < 0){
 			free(msg);
 			errno = -1;
-			return -1; //vedi come gestirlo 
+			return -1;  
 		}
 		
 		if(readn(fd_s, &msg_sz, sizeof(int)) == -1){ 
@@ -578,7 +562,7 @@ int readNFile(int n, const char *dirname){
 }
 
 
-int removeFile(const char *pathname){ //rilascia le lock 
+int removeFile(const char *pathname){ 
 	
 	errno = 0; 
 	
@@ -625,7 +609,7 @@ int save_file(const char *dir, char *file, char *buff, int size){
 			return -1;
 		} 
 	}
-	//	VEDI COME AGGIUSTARE QUESTA COSA DEI PATH
+
 	char *tmpstr, *token, *token2;
 	token = strtok_r(file, "/", &tmpstr);
 	while(token != NULL){
@@ -693,16 +677,16 @@ int comunic_cs(char *cmd, const char *pathname, int *err){
 		return -1;
 	}
 			
-	if(strncmp(msg, "Ok", n) != 0){ //gestisci i valori di return 
-		if(strstr(msg, "fail") != NULL){ //o fatal, da decidere
+	if(strncmp(msg, "Ok", n) != 0){ 
+		if(strstr(msg, "fail") != NULL){ 
 			*err = -1;
 		}
 		else if(strncmp(msg, "Err:fileNonEsistente", n) == 0){
 			*err = ENOENT;
 		}
 		else
-			*err = -1; //come lo setto errno in questo caso???
-		fprintf(stderr, "Err in %s, msg server: %s\n", cmd, msg);
+			*err = -1; 
+		//fprintf(stderr, "Err in %s, msg server: %s\n", cmd, msg);
 		
 		free(msg);
 		return -1;
@@ -713,8 +697,8 @@ int comunic_cs(char *cmd, const char *pathname, int *err){
 
 int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt){
 		
-	strncpy(msg, cmd, MAX_SIZE - 1); //so la taglia max dei cmd no null-terminated problem
-	strcat(msg, ";"); //come sopra (non voglio appesantire il codice)
+	strncpy(msg, cmd, MAX_SIZE - 1); 
+	strcat(msg, ";"); 
 	
 	if(path != NULL){
 		char *str;
@@ -726,7 +710,7 @@ int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt){
 		}
 		memset(str, 0, MAX_SIZE);
 		
-		strncat(msg, path, MAX_SIZE - strlen(msg) -1); //strncat aggiunge sempre \0 in fondo
+		strncat(msg, path, MAX_SIZE - strlen(msg) -1); 
 		strncat(msg, ";", MAX_SIZE - strlen(msg) -1);
 		
 		int bufsz = snprintf(NULL, 0, "%d",size);
@@ -740,7 +724,7 @@ int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt){
 			free(str);
 			return -1;
 		}
-		if(writen(fd_s, msg, n) == -1){ 
+		if(writen(fd_s, msg, n) == -1){ //cmd;path;sz_cnt
 			perror("Write del socket");
 			free(str);
 			return -1;
@@ -788,7 +772,7 @@ int file_receiver(const char *dirname, int fd){
 			return -1;
 		}
 		
-		if(strstr(path, "Err:") != NULL){ //controlla se va bene 
+		if(strstr(path, "Err:") != NULL){ 
 			fprintf(stderr, "MESSAGGIO: %s\n", path);
 			free(path);
 			return -1;
@@ -820,8 +804,6 @@ int file_receiver(const char *dirname, int fd){
 				if(save_file(dirname, path, cnt, sz_msg) == -1){
 					fprintf(stderr, "Errore in savefile\n");
 					free(path);
-					//if(cnt) se lo libero mi dà double free, lo sto liberando nel server   
-						//free(cnt);
 					return -1;
 				}
 			}	
@@ -830,8 +812,6 @@ int file_receiver(const char *dirname, int fd){
 			stop = 1; 
 		}
 		free(path);
-		//if(cnt)
-			//free(cnt);
 	}
 	return k;
 }

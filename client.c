@@ -12,13 +12,6 @@
 #define DEBUG
 #undef DEBUG
 
-#define UNIX_PATH_MAX 108
-#define MAX_SIZE 10000
-
-//controlla se hai effettivamente risolto problema contenuto binario
-//risolvi definitivamente MAX SIZE - MSG SIZE etc (versione più semplice, poi dopo rifinisci)
-//fai controlli su contenuto non troppo grande etc 
-
 /*
 ogni volta che leggo o scrivo file applico il protocollo:
 apro leggo/scrivo chiudo
@@ -41,7 +34,9 @@ tempo di attesa tra due richieste.
 
 
 #define N_FLAG 13
-#define SZ_STRING 1000  //rendi coerente questo se serve con api e server, dovrebbe essere la taglia del contenuto di un file, che deve passare per il canale di comunicazione, quindi < msg_size + taglia comandi
+#define UNIX_PATH_MAX 108
+#define MAX_SIZE 10000
+
 
 #define MSEC_TENT 1000  //un tentativo al secondo nella openConnection
 #define SEC_TIMEOUT 10 //secondi prima del timeout nella openConnection
@@ -51,13 +46,12 @@ tempo di attesa tra due richieste.
 #define O_LOCK 2
 #define O_CREATE_LOCK 3 
 
-//QUANDO CHIUDO IL CLIENT (vari return -1) ricordati di fare pulizia (free varie) , di disconnettere la comunicazione (e i file aperti??)
 
 void lsR(const char *dir, int *err, int *n, int flag, char *D_removed, int found_p);
 int isdot(const char dir[]);
 int write_file(char *file, char *D_removed, int found_p);
 void print_p(char *op, char *file[], int n_files, int esito, int rB, int wB);
-//in realtà non serve sia un vettore, basta char * 
+
 
 int main(int argc, char *argv[]){
 	
@@ -66,18 +60,18 @@ int main(int argc, char *argv[]){
 
 	char *d_read = NULL;
 	char *D_removed = NULL;
-	char *socket_name = NULL;  //const? 
+	char *socket_name = NULL;   
 	
 	int found_r = 0;
 	int found_w = 0;
 	int found_h = 0;
 	int found_p = 0;
 	
-	char *tmpstr, *token; //li devo inizializzare a NULL?? (guarda strtok)
+	char *tmpstr, *token; 
 	
 	struct timespec ts = {0};
 
-	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:pb:")) != -1) && !found_h && !errore){ //fai controllo su getopt per la questione R arg opzionale
+	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:p")) != -1) && !found_h && !errore){ 
 		
 		#ifdef DEBUG2
 			printf("found_r = %d, found_w = %d, found_p = %d\n", found_r, found_w, found_p);
@@ -98,7 +92,7 @@ int main(int argc, char *argv[]){
 			
 			case 'h' :
 				
-				found_h = 1; //assicurati che così termini subito, guarda se anche in fondo la gestione (cleanup) va bene
+				found_h = 1; 
 				if(found_p)
 					print_p("Usage message", NULL, 0, 1, -1, -1);
 				break;
@@ -107,20 +101,24 @@ int main(int argc, char *argv[]){
 				
 				if(socket_name == NULL){
 					socket_name = optarg;
-					
+					if(strlen(socket_name) >= UNIX_PATH_MAX){
+						errno = ENAMETOOLONG;
+						perror("inserire path socket più breve");
+						return -1;
+					}
 					struct timespec timeout;
 					clock_gettime(CLOCK_REALTIME,&timeout);
 					timeout.tv_sec += SEC_TIMEOUT;
 					
                     // tentativo di connessione, provo per un minuto facendo 1 tentativo al secondo
-                    // questa scelta la metto direttamente nelle #define o devo usare un file di config?? 					
+ 					
 					res = openConnection(socket_name, MSEC_TENT, timeout);
 					
 					if(found_p)
 						print_p("Specifica nome del socket", &optarg, 1, res, -1, -1);
 					if(res == -1){	
 						perror("Errore in openConnection"); 
-						exit(errno); //vedi se va bene l'uso di exit
+						exit(errno); 
 					}
 				}
 				else //per me il client mantiene la connessione aperta sempre finchè è attivo 
@@ -128,46 +126,7 @@ int main(int argc, char *argv[]){
 					//stampo questo ignorando gli f successivi al primo
 	
 				break;
-				
-			case 'b' : 
-				if(socket_name != NULL){
-					char *buff;
-					if((buff = malloc(SZ_STRING*sizeof(char))) == NULL){
-							perror("malloc");
-							int errno_copy = errno;
-							fprintf(stderr,"FATAL ERROR: malloc\n");
-							exit(errno_copy);
-						} 
-					memset(buff, '\0', SZ_STRING); 
-			
-					size_t sz;
-					if(openFile(optarg, 3) == -1)
-						perror("prova openFile");
-					if(writeFile(optarg, d_read) == -1)
-						perror("prova writeFile");
-					if(readFile(optarg, &buff, &sz) == -1)
-						perror("prova readFile");
-					if(sz > 0)
-						fprintf(stderr, "buff è:%s, sz è: %d\n", buff, sz);
-					if(openFile(optarg, 1) == -1)
-						perror("prova openFile");
-					if(openFile(optarg, 0) == -1)
-						perror("prova openFile");
-					if(openFile(optarg, 2) == -1)
-						perror("prova openFile");
-					if(lockFile(optarg) == -1)
-						perror("prova lockFile");
-					if(unlockFile(optarg) == -1)
-						perror("prova unlockFile");
-					if(closeFile(optarg) == -1)
-						perror("prova closeFile");
-					if(lockFile(optarg) == -1)
-						perror("prova lockFile");
-				}
-				else
-					fprintf(stderr, "no socket\n");
-				break;
-				
+					
 			case 'w' : 
 				
 				found_w = 1;
@@ -187,7 +146,7 @@ int main(int argc, char *argv[]){
 					struct stat st = {0}; //azzero la struct 
 
 					if (stat(dir, &st) == -1){
-						perror("directory non esistente, impossibile inoltrare richiesta [-w]\n"); //non so se va bene come mess d'errore 
+						perror("directory non esistente, impossibile inoltrare richiesta [-w]\n"); 
 						break;
 					}
 					else{
@@ -210,30 +169,13 @@ int main(int argc, char *argv[]){
 					if(err != 0){
 						fprintf(stderr, "errore ricorsione directory, errore nell'inoltrare richiesta [-w]\n");
 						errore = 1;
-					}
-					
-					//CONTROLLA SULLE SLIDE QUESTA PARTE 
-					/*
-					char *dir_curr[UNIX_PATH_MAX];
-					if(getcwd(dir_curr, UNIX_PATH_MAX) == NULL){
-						perror("getcwd");
-						return -1;
-					}
-					if(chdir(dir) == -1){
-						perror("chdir");
-						return -1;
-					}	
-					}
-					if(chdir(dir_curr == -1){
-						perror("chdir");
-						return -1;
-					}*/				
+					}		
 					
 				}
 				
 				else{
 					fprintf(stderr, "connessione non ancora aperta, socket non specificato\n");
-					errno = ECONNREFUSED; //vedi se va bene questo errno 
+					errno = ECONNREFUSED; 
 					return -1;
 				} 
 				
@@ -288,13 +230,13 @@ int main(int argc, char *argv[]){
 						char *buff;
 						size_t size;
 						
-						if((buff = malloc(SZ_STRING*sizeof(char))) == NULL){
+						if((buff = malloc(MAX_SIZE*sizeof(char))) == NULL){
 							perror("malloc");
 							int errno_copy = errno;
 							fprintf(stderr,"FATAL ERROR: malloc\n");
 							exit(errno_copy);
 						} 
-						memset(buff, '\0', SZ_STRING); 
+						memset(buff, '\0', MAX_SIZE); 
 						
 						res = readFile(token,  (void *) &buff, &size);
 						
@@ -338,7 +280,7 @@ int main(int argc, char *argv[]){
 				
 				break;
 				
-			case 'R' :  //non riesco a farlo funzionare con argomento opzionale (problema bash credo, non posso usare la forma :R::, guarda sulla virtual machine se va )
+			case 'R' :  
 				if(optarg != NULL){
 					if(isNumber(optarg, &n) != 0){
 						fprintf(stderr,"L'argomento di R deve essere un numero [-R] \n");
@@ -418,7 +360,7 @@ int main(int argc, char *argv[]){
 					
 						res = unlockFile(token);
 						if(res == -1){
-							perror("Errore in unlockFile [-u]"); //che succede se non interrompo? (ho tolto il return -1)
+							perror("Errore in unlockFile [-u]"); 
 						}
 						if(found_p)
 							print_p("Unock file", &token, 1, res, -1, -1);
@@ -594,7 +536,7 @@ void lsR(const char *dir, int *err, int *n, int flag, char *D_removed, int found
 					return;
 				}
 				if(S_ISDIR(statbuf.st_mode)) {
-					if ( !isdot(filename) ) //se è una directoty diversa da quella corrente
+					if ( !isdot(filename) ) //se è una directory diversa da quella corrente
 						lsR(filename, err, n, flag, D_removed, found_p); //ricorsione
 				}
 				else if(S_ISREG(statbuf.st_mode)){
@@ -628,7 +570,7 @@ int write_file(char *file, char *D_removed, int found_p){
 	if(openFile(file, O_LOCK) == -1){ //per scrivere apro il file con la lock 
 		if(errno == ENOENT){           //se il file non esiste ne creo uno con attiva la lock 
 			if(openFile(file, O_CREATE_LOCK) == -1){
-				perror("Errore in openFile");
+				perror("Errore in openFile CL (write_file)");
 				if(found_p){
 					print_p("Write File", &file, 1, -1, -1, -1);
 				}
@@ -653,11 +595,19 @@ int write_file(char *file, char *D_removed, int found_p){
 						
 		}
 		else {
-			perror("Errore in openFile");
+			perror("Errore in openFile L (write_file)");
 			if(found_p){
 				print_p("Write File", &file, 1, -1, -1, -1);
 			}
 			return -1;                      
+		}
+		
+		if (closeFile(file) == -1){
+			perror("Errore in closeFile");
+			if(found_p){
+				print_p("Write File", &file, 1, -1, -1, -1);
+			}
+			return -1;
 		}
 	}
 	else {   //se esite scrivo in append 
@@ -699,15 +649,17 @@ int write_file(char *file, char *D_removed, int found_p){
 			return -1;
 		}
 		
+		if (closeFile(file) == -1){
+			perror("Errore in closeFile");
+			if(found_p){
+				print_p("Append To File", &file, 1, -1, -1, -1);
+			}
+			return -1;
+		}
+		
 	}
 	
-	if (closeFile(file) == -1){
-		perror("Errore in closeFile");
-		if(found_p){
-			print_p("Append To File", &file, 1, -1, -1, -1);
-		}
-		return -1;
-	}
+	
 	
 return 0;
 }

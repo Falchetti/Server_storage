@@ -27,82 +27,6 @@
 
 #define MAX_REQ   20 //n. max di richieste in coda 
 
-//vedi se usare exit o pthread exit, nel caso di malloc uccido tutto il programma o solo il thread?
-
-
-//    FUNZIONI PER MUTUA ESCLUSIONE -> Versione vista a lezione   //
-static void Pthread_mutex_lock (pthread_mutex_t* mtx)
-{
-    int err;
-    if ((err = pthread_mutex_lock(mtx)) != 0 )
-    {
-        errno = err;
-        perror("lock");
-        pthread_exit((void*)&errno);
-    }
-}
-
-#define LOCK(l)      if (Pthread_mutex_lock(l)!=0)        { \
-    fprintf(stderr, "ERRORE FATALE lock\n");		    \
-    pthread_exit((void*)EXIT_FAILURE);			    \
-  } 
-static void Pthread_mutex_unlock (pthread_mutex_t* mtx)
-{
-    int err;
-    if ((err = pthread_mutex_unlock(mtx)) != 0 )
-    {
-        errno = err;
-        perror("unlock");
-        pthread_exit((void*)&errno);
-    }
-}
-
-/** Evita letture parziali
- *
- *   \retval -1   errore (errno settato)
- *   \retval  0   se durante la lettura da fd leggo EOF
- *   \retval size se termina con successo
- */
-static inline int readn(long fd, void *buf, size_t size) {
-    size_t left = size;
-    int r;
-    char *bufptr = (char*)buf;
-    while(left>0) {
-	if ((r=read((int)fd ,bufptr,left)) == -1) {
-	    if (errno == EINTR) continue;
-	    return -1;
-	}
-	if (r == 0) return 0;   // EOF
-        left    -= r;
-	bufptr  += r;
-    }
-    return size;
-}
-
-/** Evita scritture parziali
- *
- *   \retval -1   errore (errno settato)
- *   \retval  0   se durante la scrittura la write ritorna 0
- *   \retval  1   se la scrittura termina con successo
- */
-static inline int writen(long fd, void *buf, size_t size) {
-    size_t left = size;
-    int r;
-    char *bufptr = (char*)buf;
-    while(left>0) {
-	if ((r=write((int)fd ,bufptr,left)) == -1) {
-	    if (errno == EINTR) continue;
-	    return -1;
-	}
-	if (r == 0) return 0;  
-        left    -= r;
-	bufptr  += r;
-    }
-    return 1;
-}
-
-
-//ricordati di pensare alle lock su l'hashtable 
 
 typedef struct open_node{
     int fd;
@@ -119,9 +43,9 @@ typedef struct file_node{
 typedef struct file_info{ 
 	int lock_owner;
 	open_node *open_owners;
-	int lst_op; //controllo per la writeFile
-	char cnt[MAX_SIZE]; //era char *
-	int cnt_sz; //non c'era 
+	int lst_op; 
+	char cnt[MAX_SIZE]; 
+	int cnt_sz; 
 } file_info;
 
 typedef struct file_entry_queue{
@@ -163,21 +87,11 @@ int appendToF(char *path, char *cnt, int sz, int fd);
 int removeF(char *path, int fd);
 int readNF(int fd, int n);
 
-/*
-typedef struct elm_coda{
-	int fd;
-	struct elm_coda *next;
-} elm_coda;
-
-elm_coda *task_coda= NULL;
-pthread_mutex_t mutexCoda;
-pthread_cond_t condCoda;*/
-
 
 //variabili globali 
 Queue_t *task_queue;
 Queue_t *file_queue;
-//controlla la mutex sia nelle api (anche quella di inizializzazione)
+
 
 icl_hash_t *hash_table = NULL;
 pthread_mutex_t ht_mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -190,18 +104,72 @@ int n_files;
 int n_files_MAX;
 pthread_mutex_t server_info_mtx = PTHREAD_MUTEX_INITIALIZER;
 
-FILE *log_file; // puntatore al file di log
+FILE *log_file; 
 pthread_mutex_t log_mtx = PTHREAD_MUTEX_INITIALIZER;
 
+static void Pthread_mutex_lock (pthread_mutex_t* mtx)
+{
+    int err;
+    if ((err = pthread_mutex_lock(mtx)) != 0 )
+    {
+        errno = err;
+        perror("lock");
+        pthread_exit((void*)&errno);
+    }
+}
 
-static void *sigHandler(void *arg) { //mi raccomando breve
-    sigset_t *set = ((th_arg *)arg)->mask; //i segnali per cui sono in attesa (mascherati dal chiamante)
+static void Pthread_mutex_unlock (pthread_mutex_t* mtx)
+{
+    int err;
+    if ((err = pthread_mutex_unlock(mtx)) != 0 )
+    {
+        errno = err;
+        perror("unlock");
+        pthread_exit((void*)&errno);
+    }
+}
+
+static inline int readn(long fd, void *buf, size_t size) {
+    size_t left = size;
+    int r;
+    char *bufptr = (char*)buf;
+    while(left>0) {
+	if ((r=read((int)fd ,bufptr,left)) == -1) {
+	    if (errno == EINTR) continue;
+	    return -1;
+	}
+	if (r == 0) return 0;   // EOF
+        left    -= r;
+	bufptr  += r;
+    }
+    return size;
+}
+
+static inline int writen(long fd, void *buf, size_t size) {
+    size_t left = size;
+    int r;
+    char *bufptr = (char*)buf;
+    while(left>0) {
+	if ((r=write((int)fd ,bufptr,left)) == -1) {
+	    if (errno == EINTR) continue;
+	    return -1;
+	}
+	if (r == 0) return 0;  
+        left    -= r;
+	bufptr  += r;
+    }
+    return 1;
+}
+
+
+static void *sigHandler(void *arg) { 
+    sigset_t *set = ((th_arg *)arg)->mask;
 	int pipe_d = ((th_arg *)arg)->pipe_d;
 
     for( ;; ) {
 		int sig;
 		int rit;
-		int r = sigwait(set, &sig); //attesa passiva (smaschera i segnali e si mette in attesa atomicamente)
+		int r = sigwait(set, &sig); 
 		if (r != 0) {
 			errno = r;
 			perror("FATAL ERROR 'sigwait'");
@@ -211,25 +179,16 @@ static void *sigHandler(void *arg) { //mi raccomando breve
 		switch(sig) { //segnale ricevuto 
 			case SIGINT: 
 			case SIGQUIT:
-				//termina = 1;
-				// sblocca l'accept rendendo non piu' valido il listenfd
-				//shutdown(listenfd, SHUT_RDWR);
 				rit = 1;
-				if(writen(pipe_d, &rit, 2) == -1)
-					perror("Write sig_handler");
-				
-				// SOLUZIONE ALTERNATIVA CHE NON USA shutdown:
-				// Il thread dispatcher (in questo esercizio il main thread) invece di sospendersi su una accept si
-				// sospende su una select in cui, oltre al listen socket, registra il discrittore di lettura di una
-				// pipe condivisa con il thread sigHandler. Il thead sigHandler quando riceve il segnale chiude il
-				// descrittore di scrittura in modo da sbloccare la select.	    	    
+				if(writen(pipe_d, &rit, sizeof(int)) == -1)
+					perror("Write sig_handler");   	    
 				return NULL;
 			case SIGHUP: 
 				rit = -1;
-				if(writen(pipe_d, &rit, 2) == -1)
+				if(writen(pipe_d, &rit, sizeof(int)) == -1)
 					perror("Write sig_handler");
 				
-				return NULL;  //va bene? O devo rimanere in attesa di un possibile sigint?
+				return NULL;  
 			default:  ; 
 		}
     }
@@ -237,11 +196,10 @@ static void *sigHandler(void *arg) { //mi raccomando breve
 }
 
 
-int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo faccio chiamando la giusta funzione, rispondo al client, scrivo fd sulla pipe per il server  
+int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo faccio chiamando la giusta funzione, rispondo al client, scrivo fd sulla pipe per il master   
 		
 	char *msg, *path_cpy; 
 	char *tmpstr, *token, *token2;
-	//int seed = time(NULL);
 	int n, sz_msg;
 		
 	if((msg = malloc(MAX_SIZE*sizeof(char))) == NULL){
@@ -254,15 +212,13 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 	if(readn(fd_c, &sz_msg, sizeof(int)) == -1){
 		perror("read socket lato server");
 		free(msg);
-		return -1; //ok???  
+		return -2;   
 	}
-	//fprintf(stderr, "ok s: %d\n", sz_msg);
 	if(readn(fd_c, msg, sz_msg) == -1){
 		perror("read socket lato server");
 		free(msg);
-		return -1; //ok???  
+		return -2;   
 	}
-	
 	
 	#ifdef DEBUG
 		fprintf(stderr, "len queue: %d\n", (int) length(file_queue));
@@ -289,7 +245,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				free(path_cpy);
 				return -1;
 			}
-			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); 
 			fprintf(log_file,"%s %s -1 -1 %lu\n", "open_c", token, pthread_self());
 			Pthread_mutex_unlock(&log_mtx);				   	
 		}
@@ -299,7 +255,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				//fprintf(stderr, "openLock non riuscita\n");
 			}
 			else{
-				Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+				Pthread_mutex_lock(&log_mtx); 
 				fprintf(log_file,"%s %s -1 -1 %lu\n", "open_l", token, pthread_self());
 				Pthread_mutex_unlock(&log_mtx);
 			}
@@ -311,7 +267,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				free(msg);
 				return -1;
 			}
-			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); 
 			fprintf(log_file,"%s %s -1 -1 %lu\n", "open_o", token, pthread_self());
 			Pthread_mutex_unlock(&log_mtx);
 			
@@ -331,42 +287,39 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				free(path_cpy);
 				return -1;
 			}
-			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); 
 			fprintf(log_file,"%s %s -1 -1 %lu\n", "open_cl", token, pthread_self());
 			Pthread_mutex_unlock(&log_mtx);
 			
 		}
-		else if(strcmp(token, "disconnesso") == 0){//da chiudere i file e aggiornarli
+		else if(strcmp(token, "disconnesso") == 0){
 			
 			Pthread_mutex_lock(&ht_mtx);
-			//fprintf(stderr, "QUEUE INFO:\nlen: %d\nElm:\n", (int) length(file_queue));
-			int n = length(file_queue);
-			for(int i = 0; i < n; i++){
-				file_entry_queue *tmp = pop(file_queue);
-				#ifdef DEBUG
-					fprintf(stderr, "path: %s, sz_cnt: %d\ncnt:\n", tmp->path, tmp->pnt->cnt_sz); 
-					if(tmp->pnt->cnt_sz > 0){
-						fwrite(tmp->pnt->cnt, tmp->pnt->cnt_sz, 1, stdout);
-					}
-					else
-						fprintf(stderr, "//\n");
-				#endif
-				free(tmp);
-			}
+			#ifdef DEBUG
+				fprintf(stderr, "QUEUE INFO:\nlen: %d\nElm:\n", (int) length(file_queue));
+				int n = length(file_queue);
+				for(int i = 0; i < n; i++){
+					file_entry_queue *tmp = pop(file_queue);
+						fprintf(stderr, "path: %s, sz_cnt: %d\ncnt:\n", tmp->path, tmp->pnt->cnt_sz); 
+						if(tmp->pnt->cnt_sz > 0){
+							fwrite(tmp->pnt->cnt, tmp->pnt->cnt_sz, 1, stdout);
+						}
+						else
+							fprintf(stderr, "//\n");
+					free(tmp);
+				}
+			#endif
 			
 			
 			pthread_cond_broadcast(&ht_cond); //sveglio chi era in attesa della lock 
 			Pthread_mutex_unlock(&ht_mtx);
-			//devo creare una funz che scorre lo storage e toglie ovunque lock_owner (e open_owner)
 			
-			close(fd_c); //non so se farlo qui o in run_server 
+			close(fd_c);  
 			
-			
-			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); 
 			fprintf(log_file,"%s %d -1 -1 %lu\n", "close_connection", fd_c, pthread_self());
 			Pthread_mutex_unlock(&log_mtx);
 			
-
 			free(msg);
 			return -2;
 		}
@@ -376,7 +329,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				free(msg);
 				return -1;
 			}
-			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx); 
 			fprintf(log_file,"%s %s -1 -1 %lu\n", "close", token, pthread_self());
 			Pthread_mutex_unlock(&log_mtx);
 			
@@ -414,7 +367,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 			switch(res){
 				case -1: 
 					n = 21;
-					if(writen(fd_c, &n, sizeof(int)) == -1){//le write dovranno essere riviste (atomicità)
+					if(writen(fd_c, &n, sizeof(int)) == -1){
 						perror("Errore nella write");
 						free(msg);
 						return -1;
@@ -425,7 +378,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 					return -1;
 				case 0: 
 					n = 3;
-					if(writen(fd_c, &n, sizeof(int)) == -1){//le write dovranno essere riviste (atomicità)
+					if(writen(fd_c, &n, sizeof(int)) == -1){
 						perror("Errore nella write");
 						free(msg);
 						return -1;
@@ -438,7 +391,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 					break;
 				default: fprintf(stderr, "Errore, return from lockF");
 					n = 16;
-					if(writen(fd_c, &n, sizeof(int)) == -1){//le write dovranno essere riviste (atomicità)
+					if(writen(fd_c, &n, sizeof(int)) == -1){
 						perror("Errore nella write");
 						free(msg);
 						return -1;
@@ -451,7 +404,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 			
 			}
 			if(res != -1){
-				Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+				Pthread_mutex_lock(&log_mtx);
 				fprintf(log_file,"%s %s -1 -1 %lu\n", "lock", token, pthread_self());
 				Pthread_mutex_unlock(&log_mtx);
 			}
@@ -463,7 +416,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 				free(msg);
 				return -1;
 			}
-			Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+			Pthread_mutex_lock(&log_mtx);
 			fprintf(log_file,"%s %s -1 -1 %lu\n", "unlock", token, pthread_self());
 			Pthread_mutex_unlock(&log_mtx);
 			
@@ -526,62 +479,61 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 	return 0;
 }
 
-void *init_thread(void *args){ //CONSUMATORE
-	int res, n = 0;
+void *init_thread(void *args){ 
+	int res;
 	int descr;
 	
-	//fprintf(stderr, "sono nato %lu\n", pthread_self());
 	while(1){
+	
 		
-		int  *fd = pop(task_queue);		
+		int  *fd = pop(task_queue);	
+		
 		if(fd == NULL){
 			fprintf(stderr,"Errore pop, init thread\n");
-			pthread_exit(NULL); //da modificare 
+			pthread_exit(NULL); 
 		}
-		if( *fd == -1)
+		if( *fd <= -1)
             return (void*) 0;
-		
-		res = executeTask(*fd);
 		descr = *fd;
+		res = executeTask(*fd);
+
 		free(fd);
 		if( res == -1){ //errori non fatali
 			fprintf(stderr, "Impossibile servire richiesta client %d\n", descr);
 		}
 		
-		if( res == -2){ //disconnessione client fd 
-			n = 1;
+		if( res == -2 ){ //disconnessione client fd 
+			descr = descr*-1;
 		}
 		if( res == -3){ //errori fatali 
+			descr = descr*-1;
+			if(write(*((int*)args), &descr, sizeof(int)) == -1){
+				perror("write init_thread su pipe");
+				return NULL;  
+			}
 			pthread_exit(NULL);
 		}
 
-		//fprintf(stderr, "scrivo sulla pipe: %d fd : %d\n", *((int*)args), fd);
-
-		if(writen(*((int*)args), &n, 2) == -1){
+		if(write(*((int*)args), &descr, sizeof(int)) == -1){
 			perror("write init_thread su pipe");
-			return NULL; //In questo caso è ok? controlla pthread_create 
+			return NULL; 
 		}
-		if(!n){
-			if(writen(*((int*)args), &descr, 2) == -1){
-				perror("write init_thread su pipe");
-				return NULL; //In questo caso è ok? controlla pthread_create 
-			}
-		}
+
 	}
 	
 	return (void *) 0; 
 }
 
 
-void *submitTask(int descr){ //PRODUTTORE
+void *submitTask(int descr){ 
 	int *fd = malloc(sizeof(int));
 	*fd = descr;
 	
     if (push(task_queue, fd) == -1) {
 	    fprintf(stderr, "Errore: push\n");
-	    pthread_exit(NULL); //controlla se va bene 
+	    pthread_exit(NULL);  
 	}
-	
+
 	return (void *) 0;
 	
 }
@@ -615,7 +567,7 @@ int run_server(struct sockaddr_un *sa, int pipe, int sig_pipe){
 		perror("Errore nella bind");
 		return -1;
 	} 
-	listen(fd_skt, MAX_REQ); //fai gestire errore
+	listen(fd_skt, MAX_REQ); //fda fare gestire errore
 
 	//aggiorno fd_num e set 
 	
@@ -629,104 +581,80 @@ int run_server(struct sockaddr_un *sa, int pipe, int sig_pipe){
 		fd_num = sig_pipe;
 	
 	FD_ZERO(&set); //per evitare errori prima lo azzero
-	FD_ZERO(&rdset); //per evitare errori prima lo azzero
-	
+	FD_ZERO(&rdset); 
+
 	FD_SET(fd_skt, &set); //metto a 1 il bit di fd_skt, fd_skt pronto
 	FD_SET(pipe, &set);
 	FD_SET(sig_pipe, &set);
     	
-	//select in cui, oltre al listen socket, registra il discrittore di lettura di una
-	    // pipe condivisa con il thread sigHandler.
+
 	//inizio il ciclo di comunicazione con i workers 
 	int n_conn = 0;
 	int sighup = 0;
 	
 	while(!stop){
 		int res;
-		//fprintf(stderr, "ITERAZIONE: i: %d, pipe: %d, skt: %d, fd_num: %d, nuovo fd_r: %d \n", i, pipe, fd_skt, fd_num, fd_r);
-		rdset = set; //aggiorno ogni volta la maschera per la select, ne servono due perchè select modifica quello che gli passi
-		if((res = select(fd_num+1,	&rdset, NULL, NULL, NULL)) == -1){ //si blocca finchè uno tra i descrittori in rdset non si blocca più su una read
-			perror("select");
-			return -1;
-		}
+		
+		rdset = set; //aggiorno ogni volta la maschera per la select
 		if(sighup)  //non ci sono più descrittori di connessioni attive
 			if(n_conn == 0)
 				break;
-		/*if(res == 0){ //non ho specificato il timeout tanto
-			stop = 1;
-		}*/
-		//appena la select mi dice che c'è un worker pronto (descrittore client libero), inizio a scorrerli
 		
+		if((res = select(fd_num+1,	&rdset, NULL, NULL, NULL)) == -1){ 
+			perror("select");
+			return -1;
+		}		
 		for(fd = 0; fd <= fd_num; fd++){ //guardo tutti i descrittori nel nuovo rdset (aggiornato da select)
 			
 			if(FD_ISSET(fd, &rdset)){ //controllo quali di questi è pronto in lettura
-			   // fprintf(stderr, "-----------fd: %d è pronto\n", fd);
-				
+			
 				if(fd == fd_skt){ //se è il listen socket faccio accept [richiesta connessione da client]
-					//fprintf(stderr, "ho letto il SOCKET, faccio accept\n");
 					if(!sighup){  //se non c'è stato il segnale sighup accetto nuove connessioni 
 						fd_c = accept(fd_skt, NULL, 0);
-						//fprintf(stderr, "ACCEPT fatta, %d è il fd_c del client\n", fd_c);
-						//if fd_c != -1 
-						
-						Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+		
+						Pthread_mutex_lock(&log_mtx); 
 						fprintf(log_file,"%s %d -1 -1 %lu\n", "open_connection", fd_c, pthread_self());
 						Pthread_mutex_unlock(&log_mtx);
 					   
-						FD_SET(fd_c, &set); //fd_c pronto
+						FD_SET(fd_c, &set); 
 						if(fd_c > fd_num) 
 							fd_num = fd_c;
 					}
 					n_conn++;
 				}
-				else{ //(altrimenti vado con la read)
+				else{ 
 				
 					if(fd == pipe){ //se è la pipe (comunicaz master workers) aggiorno i descrittori
-						int disc = 0;
-					//fprintf(stderr, "ho letto il fd: %d di PIPE, faccio read\n", fd);					
-						
-						if(readn(pipe, &disc, 2) != -1){ //richiesta servita, fd_r è di nuovo libero, aggiorno set e fd_num
-							if(disc)
-									n_conn--;
-							else{
-								if(readn(pipe, &fd_r, 2) != -1){
-									FD_SET(fd_r, &set);
-									if(fd_r > fd_num) 
-										fd_num = fd_r;
-								}
-								else{ //quel descrittore è stato chiuso, non lo riaggiungo
-									perror("READ PIPE MASTER:");
-									return -1;
-								}
-							}
-							
-							/*else{  
-								fd = fd*(-1);
-								FD_CLR(fd, &set); //tolgo il fd da set, forse basta non riaggiungercelo?  
-								if(fd == fd_num) {
-									if((fd_num = aggiorna_max(fd, set)) == -1)
-									return -1; //???
-								
-							    }
-							}*/
-							
-						}
-						else{
+				
+						if(read(pipe, &fd_r, sizeof(int)) == -1){
 							perror("READ PIPE MASTER:");
 							return -1;
 						}
-						//fprintf(stderr, "read su pipe fatta, ho letto fd_r: %d\n", fd_r);
+						if(fd_r < 0){
+							n_conn--;
+							fd_r = fd_r*-1;
+							FD_CLR(fd_r, &set); //tolgo il fd da set, forse basta non riaggiungercelo?  
+							if(fd_r == fd_num) {
+								if((fd_num = aggiorna_max(fd_r, set)) == -1)
+									return -1; 
+							}
+						}
+						else{
+							FD_SET(fd_r, &set);
+							if(fd_r > fd_num) 
+								fd_num = fd_r;
+						}
 						
 					}
 					else if(fd == sig_pipe){ 
 						
-						if(readn(sig_pipe, &fd_r, 2) != -1){
+						if(readn(sig_pipe, &fd_r, sizeof(int)) != -1){
 							if(fd_r > 0){ //sigint, sigquit
 								stop = 1;
-								//dovrei chiudere la pipe, il socket e le connessioni attive??
 							}
-							else
+							else{
 								sighup = 1;
+							}
 						}
 						else{
 							perror("READ SIG_PIPE MASTER:");
@@ -735,13 +663,11 @@ int run_server(struct sockaddr_un *sa, int pipe, int sig_pipe){
 					}
 					else{ //altrimenti eseguo il comando richiesto dal descrittore 
 						
-						//fprintf(stderr, "ho letto un descrittore client fd: %d, faccio SUBMIT\n", fd);
-
 						FD_CLR(fd, &set); //tolgo il fd da set 
 						
 						if(fd == fd_num) {
 							if((fd_num = aggiorna_max(fd, set)) == -1){
-								return -1; //???
+								return -1; 
 							}
 		
 						}
@@ -755,10 +681,9 @@ int run_server(struct sockaddr_un *sa, int pipe, int sig_pipe){
 	}
 	
 	
+	
 	return 0;
 }
-	
-//nb: poi devi CHIUDERE la pipe 
 
 int main(int argc, char *argv[]){
 	
@@ -777,7 +702,7 @@ int main(int argc, char *argv[]){
 	
 	if((getopt(argc, argv, "k:")) == 'k'){ 
 		if((fp = fopen(optarg, "r")) == NULL){
-			perror("errore nella fopen"); //devo controllare se va a buon fine SI
+			perror("errore nella fopen"); 
             return -1;
         }
 	
@@ -788,11 +713,11 @@ int main(int argc, char *argv[]){
 			exit(errno_copy);
 		}
 				
-        while (fgets(aux, MAX_SIZE, fp)){ //dovresti fare gestione errore di fgets
+        while (fgets(aux, MAX_SIZE, fp)){ 
 			token = strtok_r(aux, ":", &tmpstr);
 			if(strcmp(token, "NFILES") == 0){
 				token = strtok_r(NULL, ":", &tmpstr);
-				token[strlen(token) - 2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
+				token[strlen(token) - 2] = '\0'; 
 				if(isNumber(token, &n) == 0 && n > 0){
 					n_files_MAX = n;
 				}
@@ -802,7 +727,7 @@ int main(int argc, char *argv[]){
 			}
 			else if(strcmp(token, "DIM") == 0){
 				token = strtok_r(NULL, ":", &tmpstr);
-				token[strlen(token) - 2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
+				token[strlen(token) - 2] = '\0'; 
 				if(isNumber(token, &n) == 0 && n > 0){
 					st_dim_MAX = n;
 				}
@@ -812,7 +737,7 @@ int main(int argc, char *argv[]){
 			}
 			else if (strcmp(token, "NWORKERS") == 0){
 				token = strtok_r(NULL, ":", &tmpstr);
-				token[strlen(token) - 2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
+				token[strlen(token) - 2] = '\0'; 
 				if(isNumber(token, &n) == 0 && n > 0)
 					n_workers = n;
 				else{
@@ -828,8 +753,8 @@ int main(int argc, char *argv[]){
 						fprintf(stderr,"FATAL ERROR: malloc\n");
 						exit(errno_copy);
 					}
-					strcpy(socket, token); //usa quello con n 
-					socket[strlen(socket)-2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
+					strncpy(socket, token, UNIX_PATH_MAX); 
+					socket[strlen(socket)-2] = '\0'; 
 				}
 				else{
 					fprintf(stderr, "errore in config file: socket value errato, verrà usato valore di default\n");
@@ -844,8 +769,8 @@ int main(int argc, char *argv[]){
 						fprintf(stderr,"FATAL ERROR: malloc\n");
 						exit(errno_copy);
 					}
-					strcpy(log, token); //usa quello con n 
-					log[strlen(socket)-2] = '\0'; //brutto, vedi se lo puoi migliorare (non voglio considerare il \n)
+					strncpy(log, token, UNIX_PATH_MAX); 
+					log[strlen(socket)-2] = '\0'; 
 				}
 				else{
 					fprintf(stderr, "errore in config file: log value errato, verrà usato valore di default\n");
@@ -866,15 +791,10 @@ int main(int argc, char *argv[]){
 	
 	//apro log_file 
 	log_file = fopen(log,"w"); 
-    fflush(log_file);   // ripulisco il file aperto da precedenti scritture, serve?
+    fflush(log_file);  
 	
 	//Inizializzazione thread pool 
 	pthread_t th[n_workers];
-	
-	
-	//pthread_mutex_init(&mutexCoda, NULL);
-	//pthread_cond_init(&condCoda, NULL);
-	//stanno in initqueue
 	
 	//inizializzazione pipe socket 
 	int pfd[2];
@@ -960,11 +880,7 @@ int main(int argc, char *argv[]){
 	
 	//inizializzo thread gestore dei segnali
 	pthread_t sighandler_thread;
-	
-	//gli devo passare anche il descrittore di lettura della pipe 
-	
-	//la maschra viene ereditata, ma la devo comunque inviare per poter fare la wait 
-    
+	    
 	th_arg *args;
 	
 	if((args = malloc(sizeof(th_arg))) == NULL){
@@ -999,9 +915,8 @@ int main(int argc, char *argv[]){
 		sigaddset(&mask, SIGQUIT);
 		sigaddset(&mask, SIGHUP);
 
-		if (pthread_sigmask(SIG_BLOCK, &mask, NULL) != 0) { //questa maschera viene ereditata dal thread creato 
+		if (pthread_sigmask(SIG_BLOCK, &mask, NULL) != 0) { 
 			fprintf(stderr, "FATAL ERROR\n");
-			//close(connfd);
 			free(socket);
 			free(log);
 			free(args);
@@ -1010,7 +925,6 @@ int main(int argc, char *argv[]){
 		
 		if(pthread_create(&th[i], NULL, &init_thread, (void *) &pfd[1]) != 0){ //creo il thread che inizia ad eseguire init_thread
 			perror("Err in creazione thread");
-			//pulizia 
 			free(socket);
 			free(log);
 			free(args);
@@ -1036,8 +950,8 @@ int main(int argc, char *argv[]){
 	}
 	
   
-	for(int i = 0; i < n_workers; i++){ //quando terminano i thread? Quando faccio la exit? 
-		if(pthread_join(th[i], NULL) != 0){ //aspetto terminino tutti i thread (la  join mi permette di liberare la memoria occupata dallo stack privato del thread)
+	for(int i = 0; i < n_workers; i++){ 
+		if(pthread_join(th[i], NULL) != 0){ 
 			perror("Err in join thread");
 			free(socket);
 			free(log);
@@ -1056,29 +970,16 @@ int main(int argc, char *argv[]){
 	
 	print_summ(log);
 	
-	//eliminazione elm thread 
-	//pthread_mutex_destroy(&mutexCoda); //non so se vanno bene
-	//pthread_cond_destroy(&condCoda);
-	//sostituiti con: 
-	//eliminazione task_queue  
-	
 	icl_hash_destroy(hash_table, &free, &free_data_ht);
 	
 	deleteQueue(task_queue);
-	/*file_entry_queue *tmp;
-	while(file_queue != NULL && file_queue->head != file_queue->tail){
-		tmp = pop(file_queue);
-		if(tmp->path != NULL)
-			free(tmp->path);
-	}*/
+
 	deleteQueue(file_queue);
-	//assicurati tutte le connessioni siano chiuse sul socket prima diterminare
-	//finora chiudo la connessione quando ricevo il mess "disconnesso" dal client
+
 	free(socket);
 	free(log);
 	free(args);
-	
-	//dovai anche chiudere il socket direi, ma forse lo fa run server 
+
 	return 0;
 }
 
@@ -1127,7 +1028,7 @@ int print_summ(char *log){
 			fclose(fd);
 			return -1;
 		}
-		*newline = '\0';  // tolgo lo '\n', non strettamente necessario
+		*newline = '\0';  
 		
 		cmd = strtok_r(buffer, " ", &tmpstr);
 		strtok_r(NULL, " ", &tmpstr);
@@ -1204,9 +1105,9 @@ file_info *init_file(int lock_owner, int fd, int lst_op, char *cnt, int sz){
 		sz = 0;
 	tmp->cnt_sz = sz;
 	if(sz > 0)
-		memcpy(tmp->cnt, cnt, sz); //controlla 
+		memcpy(tmp->cnt, cnt, sz);
 
-	return tmp; //viene liberato quando faccio la delete_ht o destroy_ht 
+	return tmp; 
 }
 
 int insert_head_f(file_node **list, char *path, int cnt_sz, char *cnt){
@@ -1348,9 +1249,8 @@ void print_deb(){
 	return;
 }
 
-//inizio in modo semplice, mettendo grandi sezioni critiche 
 
-int openFC(char *path, int fd){ //free(data)?
+int openFC(char *path, int fd){ 
 	file_info *data;
 	int n;
 	int found = 0;
@@ -1359,7 +1259,7 @@ int openFC(char *path, int fd){ //free(data)?
 	if(icl_hash_find(hash_table, path) != NULL){ 
 		fprintf(stderr, "Impossibile ricreare file già esistente\n");
 		n = 18;
-		if(writen(fd, &n, sizeof(int)) == -1){//le write dovranno essere riviste (atomicità)
+		if(writen(fd, &n, sizeof(int)) == -1){
 			perror("Errore nella write");
 			Pthread_mutex_unlock(&ht_mtx);
 			return -1;
@@ -1374,7 +1274,7 @@ int openFC(char *path, int fd){ //free(data)?
 		file_node *aux = NULL;
 		file_node *prec = NULL;
 		
-		if(st_repl(0, fd, path, &aux, -1) == -1) //per ora lo faccio tutto lockato 
+		if(st_repl(0, fd, path, &aux, -1) == -1) 
 				fprintf(stderr, "Errore in repl\n");
 		if(aux != NULL){		
 			while(aux != NULL){
@@ -1431,10 +1331,10 @@ int openFC(char *path, int fd){ //free(data)?
 		qdata->path = path;
 		if (push(file_queue, qdata) == -1) {
 			fprintf(stderr, "Errore: push\n");
-			pthread_exit(NULL); //controlla se va bene 
+			pthread_exit(NULL); 
 		}
 		n = 3;
-		if(writen(fd, &n, sizeof(int)) == -1){//le write dovranno essere riviste (atomicità)
+		if(writen(fd, &n, sizeof(int)) == -1){
 			perror("Errore nella write");
 			return -1;
 		}
@@ -1447,8 +1347,6 @@ int openFC(char *path, int fd){ //free(data)?
 			fprintf(stderr,"---OPEN CREATE FILE\n");
 			print_deb();
 		#endif 
-		//free(data);
-		//quando faccio il pop della coda devo ricordarmi di liberare la memoria
 	}
 	return 0;
 }
@@ -1459,7 +1357,7 @@ int openFL(char *path, int fd){
 	
 	Pthread_mutex_lock(&ht_mtx);
 	if((tmp = icl_hash_find(hash_table, path)) == NULL){ 
-		fprintf(stderr, "Impossibile fare lock su file non esistente\n"); //me lo stampa ogni volta che creo un file, aggiustalo
+		//fprintf(stderr, "Impossibile fare lock su file non esistente\n"); 
 		n = 21;
 		if(writen(fd, &n, sizeof(int)) == -1){
 			perror("Errore nella write di OpenFL");
@@ -1471,12 +1369,13 @@ int openFL(char *path, int fd){
 		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	} 
-	else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro (per ora)
+	else{ 
+		
 		while((tmp->lock_owner != -1 && tmp->lock_owner != fd)){
 			pthread_cond_wait(&ht_cond,&ht_mtx);
-			
+		
 			if((tmp = icl_hash_find(hash_table, path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
-				fprintf(stderr, "Impossibile fare lock su file non esistente\n"); //me lo stampa ogni volta che creo un file, aggiustalo
+				//fprintf(stderr, "Impossibile fare lock su file non esistente\n"); 
 				n = 21;
 				if(writen(fd, &n, sizeof(int)) == -1){
 					perror("Errore nella write");
@@ -1491,7 +1390,7 @@ int openFL(char *path, int fd){
 		}
 		
 		tmp->lock_owner = fd;
-		insert_head(&(tmp->open_owners), fd); //dovrei controllare val ritorno
+		insert_head(&(tmp->open_owners), fd); 
 		
 		tmp->lst_op = 0;
 		
@@ -1535,8 +1434,8 @@ int openFO(char *path, int fd){
 		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	} 
-	else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro (per ora)
-		insert_head(&(tmp->open_owners), fd); //dovrei controllare val ritorno
+	else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro  
+		insert_head(&(tmp->open_owners), fd); 
 		tmp->lst_op = 0;
 		
 		Pthread_mutex_unlock(&ht_mtx);
@@ -1649,7 +1548,7 @@ int openFCL(char *path, int fd){
 			qdata->path = path;
 			if (push(file_queue, qdata) == -1) {
 				fprintf(stderr, "Errore: push\n");
-				pthread_exit(NULL); //controlla se va bene 
+				pthread_exit(NULL); 
 			}
 			
 		}
@@ -1790,7 +1689,6 @@ int readF(char *path, int fd){
 		fprintf(stderr,"---READ FILE \n");
 		print_deb();
 	#endif
-	//free(msg);
 	
 	return 0;
 			
@@ -1828,7 +1726,7 @@ int writeF(char *path, char *cnt, int sz, int fd){
 		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
-	else if (tmp->lst_op == 0) { //forse dovrei usare l'update insert 
+	else if (tmp->lst_op == 0) { 
 		fprintf(stderr, "L'operazione precedente a writeFile deve essere openFile\n");
 		n = 18;
 		if(writen(fd, &n, sizeof(int)) == -1){
@@ -1841,7 +1739,7 @@ int writeF(char *path, char *cnt, int sz, int fd){
 		Pthread_mutex_unlock(&ht_mtx);
 		return -1;
 	}
-	else if(tmp->lock_owner != fd){ //questo me lo assicura l'if precedente in realtà 
+	else if(tmp->lock_owner != fd){ 
 		fprintf(stderr, "Impossibile scrivere su file senza lock\n");
 		n = 18;
 		if(writen(fd, &n, sizeof(int)) == -1){
@@ -1875,7 +1773,7 @@ int writeF(char *path, char *cnt, int sz, int fd){
 					return -1;
 				}
 				Pthread_mutex_unlock(&ht_mtx);
-				return -3; //vedi poi come modificare dato che non vuoi interrompere la lettura per questo 
+				return -3; 
 			}
 			
 			#ifdef DEBUG
@@ -1968,6 +1866,7 @@ int lockF(char *path, int fd){
 		return -1;
 	}
 	else{
+	
 		while((tmp->lock_owner != -1 && tmp->lock_owner != fd)){
 			pthread_cond_wait(&ht_cond,&ht_mtx);
 			if((tmp = icl_hash_find(hash_table, path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
@@ -1976,9 +1875,10 @@ int lockF(char *path, int fd){
 				return -1;
 			}
 		}
+
 		
 		tmp->lock_owner = fd;
-		tmp->lst_op = 0; //vedi se crea problemi alla openfile(O_create|o_lock)
+		tmp->lst_op = 0; 
 	}
 	Pthread_mutex_unlock(&ht_mtx);
 	
@@ -1992,7 +1892,6 @@ int lockF(char *path, int fd){
 
 }
 
-//lock e unlock sono gestite in modo diverso 
 
 int unlockF(char *path, int fd){
 	file_info *tmp;
@@ -2086,7 +1985,7 @@ int appendToF(char *path, char *cnt, int sz, int fd){
 	else if(tmp->lock_owner != fd){
 			fprintf(stderr, "Impossibile scrivere su file senza lock\n");
 			n = 18;
-			if(writen(fd, &n, sizeof(int)) == -1){//le write dovranno essere riviste (atomicità)
+			if(writen(fd, &n, sizeof(int)) == -1){
 				perror("Errore nella write");
 				Pthread_mutex_unlock(&ht_mtx);
 				return -1;
@@ -2192,7 +2091,7 @@ int appendToF(char *path, char *cnt, int sz, int fd){
 				}
 				
 			}
-			if(tmp->cnt_sz > 0){ //prima era >= 
+			if(tmp->cnt_sz > 0){
 				memcpy(tmp->cnt + tmp->cnt_sz, cnt, sz);
 				tmp->cnt_sz += sz;
 				Pthread_mutex_lock(&server_info_mtx);
@@ -2273,8 +2172,6 @@ int removeF(char *path, int fd){
 	else{
 		old_sz = tmp->cnt_sz;
 		
-		//aggiorno queue file
-		
 		int len_q = length(file_queue);
 		file_entry_queue *aux[len_q];
 		file_entry_queue *del;
@@ -2283,7 +2180,6 @@ int removeF(char *path, int fd){
 		
 		for(int i = 0; i < len_q; i++){
 			del = pop(file_queue);			
-			//attenzione omonimi 
 			if(strncmp(del->path, path, UNIX_PATH_MAX) == 0){
 				found = 1;
 				free(del);
@@ -2308,7 +2204,7 @@ int removeF(char *path, int fd){
 		}
 		
 		
-		pthread_cond_broadcast(&ht_cond); //sveglio chi era in attesa della lock 
+		pthread_cond_broadcast(&ht_cond); 
         Pthread_mutex_unlock(&ht_mtx);
 
 		Pthread_mutex_lock(&server_info_mtx);
@@ -2468,6 +2364,7 @@ int st_repl(int dim, int fd, char *path, file_node **list, int app_wr){
 			free(exp_file);
 			return -1;
 		}
+
 		while((tmp->lock_owner != -1 && tmp->lock_owner != fd)){
 			pthread_cond_wait(&ht_cond,&ht_mtx);
 			if((tmp = icl_hash_find(hash_table, exp_file->path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
@@ -2476,9 +2373,9 @@ int st_repl(int dim, int fd, char *path, file_node **list, int app_wr){
 				return -1;
 			}
 		}
-		
+
 		tmp->lock_owner = fd;
-		tmp->lst_op = 0; //vedi se crea problemi alla openfile(O_create|o_lock)
+		tmp->lst_op = 0; 
 
 		old_sz = exp_file->pnt->cnt_sz;
 				
@@ -2491,7 +2388,7 @@ int st_repl(int dim, int fd, char *path, file_node **list, int app_wr){
 		fprintf(stderr, "n_files: %d, st_dim: %d\n", n_files, st_dim);
 		Pthread_mutex_unlock(&server_info_mtx);
 		
-		Pthread_mutex_lock(&log_mtx); //vedi se modificarle con la maiuscola (funzione util)
+		Pthread_mutex_lock(&log_mtx); 
 		fprintf(log_file,"%s %s -1 %d %lu\n", "rimpiazzamento",  exp_file->path, old_sz, pthread_self());
 		Pthread_mutex_unlock(&log_mtx);
 		
@@ -2563,15 +2460,7 @@ int st_repl(int dim, int fd, char *path, file_node **list, int app_wr){
 		old_sz = exp_file->pnt->cnt_sz;
 		if(list != NULL)
 			insert_head_f(list, exp_file->path, old_sz, exp_file->pnt->cnt);
-		
-		
-		
-		
-		/*if(icl_hash_delete(hash_table, exp_file->path, &free, &free_data_ht) == -1){ 
-			fprintf(stderr, "Errore nella rimozione del file dallo storage, in repl\n");
-			free(exp_file);
-			return -1;
-		}*/
+
 		Pthread_mutex_lock(&server_info_mtx);
 		n_files--;
 		st_dim = st_dim - old_sz; 
@@ -2606,20 +2495,18 @@ int file_sender(file_node *file, int fd){
 		perror("Errore nella write1");
 		return -1;
 	}
-	//fprintf(stderr, "path: %s, msg_sz: %d\n", file->path, msg_sz);
+
 	if(writen(fd, file->path , msg_sz) == -1){
 		perror("Errore nella write2");
 		return -1;
 	}
-	
-	//fprintf(stderr, "path: %s, msg_sz: %d\n", file->path, msg_sz);
+
 	if(writen(fd, &(file->cnt_sz), sizeof(int)) == -1){
 		perror("Errore nella write3");
 		return -1;
 	}
-	//fprintf(stderr, "Tutto bene: file: %s,  %d\n", file->path, file->cnt_sz);
 	if(file->cnt_sz > 0){
-		//fprintf(stderr, "path: %s, cnt_sz: %d, cnt: %s\n", file->path, msg_sz, file->cnt);
+
 	
 		if(writen(fd, file->cnt , file->cnt_sz) == -1){
 			perror("Errore nella write4");
