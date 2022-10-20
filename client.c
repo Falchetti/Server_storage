@@ -20,22 +20,27 @@ apro leggo/scrivo chiudo
 /*
 ho adottato una politica di scrittura dei file nel server secondo la quale
 se il file esiste (omonimo) nel server, il contenuto del file da scrivere
-viene scritto in append, se non esiste, il file viene creato e scritto con writeFile
+viene scritto in append (appendToFile), 
+se non esiste, il file viene creato e scritto con writeFile
 */  
 
 /*
  Nella mia scelta di progetto conta l'ordine dei flag da linea di comando.
 Il flag f (socketname) deve essere specificato prima di richiedere i flag w,W,r,R,l,u,c 
 (flag che prevedono richieste al server) e non deve essere ripetuto.
-I flag d (e D) devono essere specificati prima delle r/R (e w/W) a cui fanno riferimento.
+I flag d (e D) devono essere specificati PRIMA delle r/R (e w/W) a cui fanno riferimento.
 Allo stesso modo per il flag t, solo le richieste a lui successive avranno quello specifico 
 tempo di attesa tra due richieste.
 */
 
+//attualmente chiudo il client in maniera brusca solo nei casi in cui 
+//open/close connection o malloc
+//non vanno a buon fine
+
 
 #define N_FLAG 13
 #define UNIX_PATH_MAX 108
-#define MAX_SIZE 10000
+#define MAX_SIZE 10000 //taglia massima contenuto file (usata su read)
 
 
 #define MSEC_TENT 1000  //un tentativo al secondo nella openConnection
@@ -47,48 +52,53 @@ tempo di attesa tra due richieste.
 #define O_CREATE_LOCK 3 
 
 
+//e i file aperti??
+//ai file aperti forse ci dovrebbe pensare il server a togliere l'identificatore? 
+//Ma così dovrebbe scansionare tutti i suoi file ogni volta che si chiude una connessione per togliere quell'identificatore
+//tuttavia se li lascio una nuova connessione potrebbe riprendere quell'identificatore e generare errori 
+//(ha dei file aperti che in realtà sono di vecchie connessioni) 
+//Soluzione: mi assicuro che, a meno di errori, ogni volta che apro un file, lo chiudo! 
+//[controllato]
+//il problema però rimane per i lock owner..
+
+
+//ATTENZIONE, che succede ai client che erano bloccati in attesa di una lock di un file quando un client ELIMINA quel file???
+//vedere gestione server!!! 
+
+
 void lsR(const char *dir, int *err, int *n, int flag, char *D_removed, int found_p);
 int isdot(const char dir[]);
 int write_file(char *file, char *D_removed, int found_p);
 void print_p(char *op, char *file[], int n_files, int esito, int rB, int wB);
-
+//in realtà non lo userò mai come vettore, ma ne prenderò sempre uno alla volta (lo lascio così ormai perchè più generale)
 
 int main(int argc, char *argv[]){
 	
 	int flag, n, res;
-	int errore = 0;
+	int errno_copy;
 
 	char *d_read = NULL;
 	char *D_removed = NULL;
-	char *socket_name = NULL;   
+	char *socket_name = NULL;  
 	
 	int found_r = 0;
 	int found_w = 0;
 	int found_h = 0;
 	int found_p = 0;
 	
-	char *tmpstr, *token; 
+	char *tmpstr = NULL;
+	char *token = NULL; 
 	
 	struct timespec ts = {0};
-
-	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:p")) != -1) && !found_h && !errore){ 
-		
-		#ifdef DEBUG2
-			printf("found_r = %d, found_w = %d, found_p = %d\n", found_r, found_w, found_p);
-			if( d_read != NULL)   
-				printf("d_read = %s, ", d_read);
-			if( D_removed != NULL)   
-				printf("D_removed = %s, ", D_removed);
-			if( files != NULL)   
-				printf("files = %s, ", files);
-			if( socket_name != NULL)   
-				printf("socket_name = %s ", socket_name); 
-			printf("\n\n");
-		#endif
 	
+	//fai controllo su getopt per la questione R arg opzionale
+	while(((flag = getopt(argc, argv, "hf:w:W:D:r:R:d:t:l:u:c:pb:x:")) != -1) && !found_h){ 
 		
-				
 		switch(flag){
+			
+			case 'x' :
+					openFile(optarg, O_CREATE_LOCK);
+					break;
 			
 			case 'h' :
 				
@@ -111,27 +121,66 @@ int main(int argc, char *argv[]){
 					timeout.tv_sec += SEC_TIMEOUT;
 					
                     // tentativo di connessione, provo per un minuto facendo 1 tentativo al secondo
- 					
+                    // questa scelta la metto direttamente nelle #define o devo usare un file di config?? 					
 					res = openConnection(socket_name, MSEC_TENT, timeout);
 					
 					if(found_p)
 						print_p("Specifica nome del socket", &optarg, 1, res, -1, -1);
 					if(res == -1){	
 						perror("Errore in openConnection"); 
-						exit(errno); 
+						exit(errno); //vedi se va bene l'uso di exit
 					}
 				}
-				else //per me il client mantiene la connessione aperta sempre finchè è attivo 
+				else // per me il client mantiene la connessione aperta sempre finchè è attivo 
 					fprintf(stderr, "Attenzione: l'opzione f può essere richiesta una sola volta e necessita di un argomento\n"); 
-					//stampo questo ignorando gli f successivi al primo
+					// ignoro f successivi al primo
 	
 				break;
-					
+				
+			case 'b' : 
+				if(socket_name != NULL){
+					char *buff;
+					if((buff = malloc(MAX_SIZE*sizeof(char))) == NULL){
+							perror("malloc");
+							int errno_copy = errno;
+							fprintf(stderr,"FATAL ERROR: malloc\n");
+							exit(errno_copy);
+						} 
+					memset(buff, '\0', MAX_SIZE); 
+			
+					size_t sz;
+					if(openFile(optarg, 3) == -1)
+						perror("prova openFile");
+					if(writeFile(optarg, d_read) == -1)
+						perror("prova writeFile");
+					if(readFile(optarg, (void **) &buff, &sz) == -1)
+						perror("prova readFile");
+					if(sz > 0)
+						fprintf(stderr, "buff è:%s, sz è: %ld\n", buff, sz);
+					if(openFile(optarg, 1) == -1)
+						perror("prova openFile");
+					if(openFile(optarg, 0) == -1)
+						perror("prova openFile");
+					if(openFile(optarg, 2) == -1)
+						perror("prova openFile");
+					if(lockFile(optarg) == -1)
+						perror("prova lockFile");
+					if(unlockFile(optarg) == -1)
+						perror("prova unlockFile");
+					if(closeFile(optarg) == -1)
+						perror("prova closeFile");
+					if(lockFile(optarg) == -1)
+						perror("prova lockFile");
+				}
+				else
+					fprintf(stderr, "no socket\n");
+				break;
+				
 			case 'w' : 
 				
 				found_w = 1;
 					
-				if(socket_name != NULL){ //mi assicuro la connessione sia aperta 
+				if(socket_name != NULL){ //mi assicuro la connessione sia aperta (se non lo è termino client)
 					 
 					token = strtok_r(optarg, ",", &tmpstr); 
 					char *dir = token;
@@ -146,36 +195,48 @@ int main(int argc, char *argv[]){
 					struct stat st = {0}; //azzero la struct 
 
 					if (stat(dir, &st) == -1){
-						perror("directory non esistente, impossibile inoltrare richiesta [-w]\n"); 
-						break;
+						perror("directory non esistente, impossibile inoltrare richiesta [-w]\n");
+						
+						if(found_p){
+							print_p("Write File", &dir, 1, -1, -1, -1);
+						}
+						break; //ignoro la richiesta e vado alla successiva 
 					}
 					else{
 						if(!S_ISDIR(st.st_mode)){
 							fprintf(stderr, "%s non e' una directory, impossibile inoltrare richiesta [-w]\n", dir);
-							errno = ENOTDIR;
-							break;
+							if(found_p){
+								print_p("Write File", &dir, 1, -1, -1, -1);
+							}
+							//errno = ENOTDIR; penso sia inutile, tanto verrà sovrascritto, per esempio da closeConnection alla fine
+							break; //ignoro la richiesta e vado alla successiva 
 						} 
 					}
 					
 					int err = 0;
 					
-					if(token == NULL || n == 0){
+					if(token == NULL || n <= 0){ //valori negativi o non corretti li considero n = 0
 						n = 1;
 					    lsR(dir, &err, &n, 0, D_removed, found_p);
 					}
 					else
 						lsR(dir, &err, &n, 1, D_removed, found_p);
 					
-					if(err != 0){
+					if(err != 0){ 
 						fprintf(stderr, "errore ricorsione directory, errore nell'inoltrare richiesta [-w]\n");
-						errore = 1;
-					}		
+						if(found_p)
+							print_p("Write File", &dir, 1, -1, -1, -1);	
+						break; //ignoro la richiesta e vado alla successiva
+					}
+
+					//non devo cambiare directory di lavoro per come ho scritto lsR
+					//però in generale importante che i path passati da riga di comando siano ASSOLUTI
 					
 				}
 				
 				else{
 					fprintf(stderr, "connessione non ancora aperta, socket non specificato\n");
-					errno = ECONNREFUSED; 
+					errno = ENOTCONN; 
 					return -1;
 				} 
 				
@@ -185,19 +246,18 @@ int main(int argc, char *argv[]){
 			case 'W' : 
 				found_w = 1;
 				
-				if(socket_name != NULL){ //mi assicuro la connessione sia aperta 
+				if(socket_name != NULL){ 
 					 
 					token = strtok_r(optarg, ",", &tmpstr); 
 					while (token) {
-						if(write_file(token, D_removed, found_p) == -1){
-							fprintf(stderr, "Errore  nella scrittura del file richiesto: %s [-W]\n", token);
-						}
+						if(write_file(token, D_removed, found_p) == -1)
+							fprintf(stderr, "Errore nella scrittura del file richiesto: %s [-W]\n", token); //ignoro la richiesta e vado alla successiva
 						token = strtok_r(NULL, ",", &tmpstr);	
 					}
 				}
-				
 				else{
-					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
+					fprintf(stderr, "connessione non ancora aperta, socket non specificato\n");
+					errno = ENOTCONN; 
 					return -1;
 				} 
 				
@@ -223,9 +283,11 @@ int main(int argc, char *argv[]){
 					while (token) {
 						if(openFile(token, O_LOCK) == -1){ 
 							perror("Errore in openFile [-r]");
-									fprintf(stderr, "file: %s\n", token);
+							fprintf(stderr, "impossibile aprire file: %s\n", token);
+							if(found_p)
+								print_p("Read file", &token, 1, -1, -1, -1);
 							token = strtok_r(NULL, ",", &tmpstr);
-							continue;                               
+							continue;   //ignoro la richiesta e vado alla successiva                         
 						}
 						char *buff;
 						size_t size;
@@ -234,39 +296,40 @@ int main(int argc, char *argv[]){
 							perror("malloc");
 							int errno_copy = errno;
 							fprintf(stderr,"FATAL ERROR: malloc\n");
+							closeFile(token);
 							exit(errno_copy);
 						} 
 						memset(buff, '\0', MAX_SIZE); 
 						
 						res = readFile(token,  (void *) &buff, &size);
+						errno_copy = errno;
 						
 						if(found_p)
 							print_p("Read file", &token, 1, res, size, -1);
 						
 						if(res == -1){
+							errno = errno_copy;
 							perror("Errore in readFile [-r]");
+							fprintf(stderr, "impossibile leggere file: %s\n", token);
 							free(buff);
+							closeFile(token);
 							token = strtok_r(NULL, ",", &tmpstr);
-							continue;
+							continue; //ignoro la richiesta e vado alla successiva
 						} 
 						
 						#ifdef DEBUG
 							if(buff[0] == '\0')
-								fprintf(stderr, "file letto: VUOTO\n");
+								fprintf(stderr, "File letto: vuoto\n");
 							else
-								fprintf(stderr, "FILE LETTO: %s\n", (char *) buff);
+								fprintf(stderr, "File letto: %s\n", (char *) buff);
 						#endif
 						
-						
-						
-     					if(d_read != NULL)
-							if(save_file(d_read, token, buff, size) == -1){
+     					if(d_read != NULL){
+							if(save_file(d_read, token, buff, size) == -1)
 								fprintf(stderr, "si è verificato un errore nel salvataggio di: %s [-r]\n", token);
-							}
-						
-						if (closeFile(token) == -1){
-							perror("Errore in closeFile [-r]");
 						}
+						if (closeFile(token) == -1)
+							perror("Errore in closeFile [-r]");
 						
 						token = strtok_r(NULL, ",", &tmpstr);
 						free(buff); 				
@@ -274,57 +337,77 @@ int main(int argc, char *argv[]){
 				}
 				
 				else{
-					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
+					fprintf(stderr, "connessione non ancora aperta, socket non specificato\n");
+					errno = ENOTCONN; 
 					return -1;
 				} 
 				
 				break;
 				
-			case 'R' :  
-				if(optarg != NULL){
-					if(isNumber(optarg, &n) != 0){
-						fprintf(stderr,"L'argomento di R deve essere un numero [-R] \n");
-						break;
-					}	
-	            }
-				else 
-					n = 0;
-				res = readNFile(n, d_read);
-				if(res == -1)
-					perror("Errore in readNFiles");  
+			case 'R' :  //!!!!!!non riesco a farlo funzionare con argomento opzionale (problema bash credo, non posso usare la forma :R::, guarda sulla virtual machine se va )
 				
-				if(found_p){
-					if(res != -1)
-						if(n == 0)
-							fprintf(stderr, "Tipo di operazione: Lettura %d file, File effettivamente letti: %d, Esito: SUCCESS\n", res, res);
-						else
-							fprintf(stderr, "Tipo di operazione: Lettura %d file, File effettivamente letti: %d, Esito: SUCCESS\n", n, res);
-					
-					else 
-						fprintf(stderr, "Tipo di operazione: Lettura %d file, Esito: FAIL\n", n);
-				}
-
 				found_r = 1;
+				int all = 0;
 				
+				if(socket_name != NULL){
+					if(optarg != NULL){
+						if(isNumber(optarg, &n) != 0){
+							fprintf(stderr,"L'argomento di R deve essere un numero [-R] \n");
+							break; //ignoro la richiesta e vado alla successiva
+						}	
+					}
+					else{
+						all = 1;
+						n = 0;
+					}
+					if(n <= 0) 
+						all = 1;
+					
+					res = readNFile(n, d_read);
+					if(res == -1)
+						perror("Errore in readNFiles");  
+					
+					if(found_p){
+						if(res != -1){
+							if(all) //non posso sapere lato client quali file sono stati letti e con quale size (struttura api ReadNFiles)
+								fprintf(stderr, "Tipo di operazione: Lettura tutti i file, File effettivamente letti: %d, Esito: SUCCESS\n", res);
+							else
+								fprintf(stderr, "Tipo di operazione: Lettura %d file, File effettivamente letti: %d, Esito: SUCCESS\n", n, res);
+						}
+						else {
+							if(all)
+								fprintf(stderr, "Tipo di operazione: Lettura tutti i file, Esito: FAIL\n"); //ignoro la richiesta e vado alla successiva
+							else 
+								fprintf(stderr, "Tipo di operazione: Lettura %d file, Esito: FAIL\n", n);
+						}
+					}
+				}
+				else{
+					fprintf(stderr, "connessione non ancora aperta, socket non specificato\n");
+					errno = ENOTCONN; 
+					return -1;
+				} 
+
 				break;
 			
 			case 'd' :
 				d_read = optarg;
+				
 				if(found_p)
 						print_p("Specifica cartella file letti", &optarg, 1, 0, -1, -1);
+				
 				found_r = 0; //ogni volta che inserisco una nuova directory azzero found_r 
 				break;
 				
-			case 't' : 
+			case 't' : //optarg in millisecondi 
 				if(isNumber(optarg, &n) == 0 && n >= 0){
 					res = 1;
-					//t = n;
-					ts.tv_sec = n / 1000;
+					ts.tv_sec = n / 1000;  
 					ts.tv_nsec = (n % 1000) * 1000000;
 				}
 				else{
 					res = -1;
-					fprintf(stderr, "argomento di -t errato [-t] \n");
+					fprintf(stderr, "argomento di -t errato [-t] \n"); //ignoro la richiesta e vado alla successiva
 				}
 				if(found_p)
 						print_p("Specifica tempo di attesa tra due richieste", NULL, 0, res, -1, -1);
@@ -337,16 +420,19 @@ int main(int argc, char *argv[]){
 					token = strtok_r(optarg, ",", &tmpstr);
 					while (token) { //ho scelto che per fare la lock non devo aprire il file 
 						res = lockFile(token);
+						errno_copy = errno;
 						if(found_p)
 							print_p("Lock file", &token, 1, res, -1, -1);
 						if(res == -1){
-							perror("Errore in lockFile [-l]");
+							errno = errno_copy;
+							perror("Errore in lockFile [-l]"); //ignoro la richiesta e vado alla successiva
 						}
 						token = strtok_r(NULL, ",", &tmpstr);	
 					}
 				}
 				else{ 
 					fprintf(stderr, "connessione non ancora aperta, socket non specificato\n");
+					errno = ENOTCONN; 
 					return -1;
 				} 
 				
@@ -356,21 +442,23 @@ int main(int argc, char *argv[]){
 				if(socket_name != NULL){
 					
 					token = strtok_r(optarg, ",", &tmpstr);
-					while (token) { //ho scelto che per fare la lock non devo aprire il file 
+					while (token) { //ho scelto che per fare la unlock non devo aprire il file 
 					
 						res = unlockFile(token);
-						if(res == -1){
-							perror("Errore in unlockFile [-u]"); 
-						}
 						if(found_p)
 							print_p("Unock file", &token, 1, res, -1, -1);
+						if(res == -1){
+							errno = errno_copy;
+							perror("Errore in unlockFile [-u]"); //ignoro la richiesta e vado alla successiva
+						}
 						
 						token = strtok_r(NULL, ",", &tmpstr);	
 					}
 				}
 				
 				else{
-					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
+					fprintf(stderr, "connessione non ancora aperta, socket non specificato\n");
+					errno = ENOTCONN; 
 					return -1;
 				} 
 				
@@ -380,31 +468,32 @@ int main(int argc, char *argv[]){
 				if(socket_name != NULL){
 					
 					token = strtok_r(optarg, ",", &tmpstr);
-					while (token) { //ho scelto che per fare la lock non devo aprire il file 
+					while (token) { //per rimuovere file non devo aprirlo, solo fare la lock
 					 
 						if(lockFile(token) == -1){
 							perror("Errore in lockFile [-c]");
 							if(found_p)
 								print_p("Remove file", &token, 1, -1, -1, -1);
 							token = strtok_r(NULL, ",", &tmpstr);
-							continue;
+							continue; //ignoro la richiesta e vado alla successiva
 						}
 						res = removeFile(token);
 						
 						if(res == -1){
 							perror("Errore in removeFile"); 
+							if(unlockFile(token) == -1)
+								perror("Errore in unlockFile [-c]");
 						}
 						if(found_p)
 							print_p("Remove file", &token, 1, res, -1, -1);
 						
-                        //lo cancello quindi non ha senso l'unlock 
-						
+                        //è stato cancellato, quindi non ha senso l'unlock 
 						token = strtok_r(NULL, ",", &tmpstr);	
 					}
 				}
-				
 				else{
-					fprintf(stderr, "connessione non acora aperta, socket non specificato\n");
+					fprintf(stderr, "connessione non ancora aperta, socket non specificato\n");
+					errno = ENOTCONN; 
 					return -1;
 				} 
 				
@@ -412,10 +501,8 @@ int main(int argc, char *argv[]){
 				
 			case 'p' :
 				
-				if(!found_p){
+				if(!found_p)
 					found_p = 1;
-				}
-				
 				else
 					printf("L'opzione p può essere richiesta una sola volta\n");
 				
@@ -424,11 +511,13 @@ int main(int argc, char *argv[]){
 			default:  
 		        printf("flag non riconosciuto [-%c], usare -h per richiedere la lista di flag disponibili\n", (char) flag);
 		}
-		do {
+		errno = 0;
+		do { //per evitare di non aspettare a sufficienza se arriva un'interruzione 
 			n = nanosleep(&ts, &ts);
 		} while (n && errno == EINTR);
 		
 	}
+	
 	if(!found_r && d_read != NULL)
 		printf("il flag d deve essere seguito dal flag r o R\n");
 	if(!found_w && D_removed != NULL)
@@ -441,7 +530,7 @@ int main(int argc, char *argv[]){
 		perror("Errore in closeConnection");
 		exit(errno);
 	}
-	
+
 	return 0;
 	
 }
@@ -449,7 +538,7 @@ int main(int argc, char *argv[]){
 void print_p(char *op, char *file[], int n_files, int esito, int rB, int wB){
 	if(op != NULL){
 		printf("\nTipo di operazione: %s, ", op);
-		if(file != NULL && n_files > 0){
+		if(file != NULL && n_files > 0){ //in realtà per come la uso, n_files sarà MAX 1 
 			printf("Files di riferimento: ");
 			for(int i = 0; i < n_files; i++){
 				if(file[i] != NULL)
@@ -482,12 +571,16 @@ int isdot(const char dir[]) {
   return 0;
 }
 
+
+//modifica della funzione vista a lezione 
 void lsR(const char *dir, int *err, int *n, int flag, char *D_removed, int found_p) {
 	
-    // controllo ogni volta che il parametro sia una directory
-	if(!(*err) && *n > 0){ //fermo la ricorsione prima che i file finiscano nel caso in cui flag = 1 
+    
+	if(!(*err) && *n > 0){ //fermo la ricorsione prima che i file finiscano nel caso in cui flag = 1  (devo leggere tot specifico di file)
+		
 		struct stat st = {0};
 		
+		// controllo ogni volta che il parametro sia una directory
 		if (stat(dir, &st) == -1){
 			perror("directory non esistente");
 			*err = 1;
@@ -511,7 +604,7 @@ void lsR(const char *dir, int *err, int *n, int flag, char *D_removed, int found
 		}
 		else {
 			struct dirent *file;
-			
+
 			while((errno = 0, file = readdir(dp)) != NULL) {
 				struct stat statbuf;
 				
@@ -536,7 +629,7 @@ void lsR(const char *dir, int *err, int *n, int flag, char *D_removed, int found
 					return;
 				}
 				if(S_ISDIR(statbuf.st_mode)) {
-					if ( !isdot(filename) ) //se è una directory diversa da quella corrente
+					if ( !isdot(filename) ) //se è una directoty diversa da quella corrente
 						lsR(filename, err, n, flag, D_removed, found_p); //ricorsione
 				}
 				else if(S_ISREG(statbuf.st_mode)){
@@ -563,12 +656,15 @@ void lsR(const char *dir, int *err, int *n, int flag, char *D_removed, int found
 int write_file(char *file, char *D_removed, int found_p){
 
 	FILE *fp;
-	char buff[MAX_SIZE];
+	char *buff;
 	int size, n, res;
 	struct stat st;
+	int errno_copy;
+
+	errno = 0;
 	
-	if(openFile(file, O_LOCK) == -1){ //per scrivere apro il file con la lock 
-		if(errno == ENOENT){           //se il file non esiste ne creo uno con attiva la lock 
+	if(openFile(file, O_LOCK) == -1){   //per scrivere apro il file con la lock 
+		if(errno == ENOENT){           //se il file non esiste ne creo uno con attiva la lock e scrivo
 			if(openFile(file, O_CREATE_LOCK) == -1){
 				perror("Errore in openFile CL (write_file)");
 				if(found_p){
@@ -576,55 +672,62 @@ int write_file(char *file, char *D_removed, int found_p){
 				}
 				return -1;
 			}
+			
 			res = writeFile(file, D_removed);
+			errno_copy = errno;
+			
 			if(found_p){
 				if((fp = fopen(file, "rb")) == NULL){
 					perror("errore fopen");
+					print_p("Write File", &file, 1, -1, -1, -1);
+					closeFile(file);
 					return -1;
 				}
 				
 				stat(file, &st);
 				print_p("Write File", &file, 1, res, -1, st.st_size);
-				fclose(fp);
+				if(fclose(fp) == -1){
+					perror("fclose write_file");
+					closeFile(file);
+					return -1;
+				}
 			}
-			if( res == -1){ 
+			errno = errno_copy;
+			if(res == -1){ 
 				perror("Errore in writeFile");
+				closeFile(file);
 				return -1;
 			}	
-			
-						
 		}
 		else {
 			perror("Errore in openFile L (write_file)");
-			if(found_p){
+			if(found_p)
 				print_p("Write File", &file, 1, -1, -1, -1);
-			}
 			return -1;                      
-		}
-		
-		if (closeFile(file) == -1){
-			perror("Errore in closeFile");
-			if(found_p){
-				print_p("Write File", &file, 1, -1, -1, -1);
-			}
-			return -1;
 		}
 	}
 	else {   //se esite scrivo in append 
 		
 		if((fp = fopen(file, "rb")) == NULL){
 			perror("errore fopen");
-			if(found_p){
+			if(found_p)
 				print_p("Append to File", &file, 1, -1, -1, -1);
-			}
+			closeFile(file);
 			return -1;
 		}
 		
 		stat(file, &st);
         size = st.st_size;
 		
-		memset(buff, 0, MAX_SIZE);
-		n = fread(buff, 1, size, fp);
+		if((buff = malloc(size*sizeof(char))) == NULL){
+			perror("malloc");
+			int errno_copy = errno;
+			fprintf(stderr,"FATAL ERROR: malloc\n");
+			exit(errno_copy);
+		}
+		
+		memset(buff, 0, size);
+		n = fread(buff, 1, size, fp); //metto in buff il contenuto del file 
 		
         if(!n){
 			if (ferror(fp)){    
@@ -633,33 +736,36 @@ int write_file(char *file, char *D_removed, int found_p){
 				if(found_p){
 					print_p("Write File", &file, 1, -1, -1, -1);
 				}
+				closeFile(file);
+				//devo fare l'unlock? potrei fare che quando chiudo un file lo unlockko (se ho la lock)
+				free(buff);
         		return -1;
 			}
 		}
 		
-		fclose(fp);
+		if(fclose(fp) == -1){
+			perror("fclose write_file");
+			closeFile(file);
+			free(buff);
+			return -1;
+		}
 		
 		res = appendToFile(file, buff, size, D_removed);
+		errno_copy = errno;
 		
-		if(found_p){
+		free(buff);
+		
+		if(found_p)
 			print_p("Append To File", &file, 1, res, -1, size);
-		}
 		if(res == -1){
+			errno = errno_copy;
 			perror("Errore in appendToFile");
+			closeFile(file);
 			return -1;
 		}
-		
-		if (closeFile(file) == -1){
-			perror("Errore in closeFile");
-			if(found_p){
-				print_p("Append To File", &file, 1, -1, -1, -1);
-			}
-			return -1;
-		}
-		
 	}
+	if(closeFile(file) == -1)
+		perror("Errore in closeFile [write_file]");
 	
-	
-	
-return 0;
+	return 0;
 }

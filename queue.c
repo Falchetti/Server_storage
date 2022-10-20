@@ -57,10 +57,12 @@ void deleteQueue(Queue_t *q) {
     while(q->head != q->tail) {
 	Node_t *p = (Node_t*)q->head;
 	q->head = q->head->next;
-	if(p->data)
+	if(p->data != NULL){
 		free(p->data);
+	}
 	freeNode(p);
     }
+	free(q->head->data); ////MODIFICATO
     if (q->head) freeNode((void*)q->head);
     if (&q->qlock)  pthread_mutex_destroy(&q->qlock);
     if (&q->qcond)  pthread_cond_destroy(&q->qcond);
@@ -68,6 +70,7 @@ void deleteQueue(Queue_t *q) {
 }
 
 int push(Queue_t *q, void *data) {
+	//fprintf(stderr, "QUEUE PUSH: %s\n", (char *)data);
     if ((q == NULL) || (data == NULL)) { errno= EINVAL; return -1;}
     Node_t *n = allocNode();
     if (!n) return -1;
@@ -83,7 +86,7 @@ int push(Queue_t *q, void *data) {
 }
 
 void *pop(Queue_t *q) {        
-
+	
     if (q == NULL) { errno= EINVAL; return NULL;}
     LockQueue(q);
 	
@@ -95,11 +98,12 @@ void *pop(Queue_t *q) {
     Node_t *n  = (Node_t *)q->head;
     void *data = (q->head->next)->data;
     q->head    = q->head->next;
+	q->head->data = NULL; //MODIFICATO 
     q->qlen   -= 1;
     assert(q->qlen>=0);
     UnlockQueue(q);
     freeNode(n);
-
+	//fprintf(stderr, "QUEUE POP: %s\n", (char *)data);
     return data;
 } 
 // NOTA: in questa funzione si puo' accedere a q->qlen NON in mutua esclusione

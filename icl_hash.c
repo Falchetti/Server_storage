@@ -38,29 +38,6 @@
  * @returns the hash index
  */
  
-//**************************************************//
-//*******************MODIFICHE**********************// 
-//**************************************************//
-
- #define SIZE_CNT 100 //rendi la taglia del contenuto coerente con il resto del codice
- #define MAX_SIZE 230
- 
-
-typedef struct open_node{
-    int fd;
-    struct open_node *next;
-} open_node;
-
-typedef struct file_info{ 
-	int lock_owner;
-	open_node *open_owners; 
-	int lst_op; //controllo per la writeFile
-	char cnt[MAX_SIZE];
-	int cnt_sz;
-} file_info;
-
-//**************************************************//
-//**************************************************// 
 
 unsigned int
 hash_pjw(void* key)
@@ -173,32 +150,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
     /* if key was not found */
     curr = (icl_entry_t*)malloc(sizeof(icl_entry_t));
     if(!curr) return NULL;
-    
-   
-   //**************************************************//
-   //*******************MODIFICHE**********************//
-	/**************************************************
-   
-	curr->key = malloc((strlen(key)+1)*sizeof(char)); //modificato
-    strcpy(curr->key, key); //modificato, forse potrei usare strdup 
-    
-	//curr->data = ((file_info)curr->data)-> lock_owner 
-	
-	curr->data = malloc(sizeof(file_info));
-  
-	((file_info *)curr->data)->lock_owner = ((file_info *)data)->lock_owner;
-	
-	((file_info *)curr->data)->open_owners = malloc(sizeof(open_node));
-	((file_info *)curr->data)->open_owners->fd = ((file_info *)data)->open_owners->fd; 
-	((file_info *)curr->data)->open_owners->next = ((file_info *)data)->open_owners->next;
-	((file_info *)curr->data)->lst_op = ((file_info *)data)->lst_op;
-	if(((file_info *)data)->cnt != NULL){
-		memcpy(((file_info *)curr->data)->cnt, ((file_info *)data)->cnt, ((file_info *)curr->data)->cnt_sz);
-	}
-	((file_info *)curr->data)->cnt_sz = ((file_info *)data)->cnt_sz;
-	//**************************************************/
-	//**************************************************// 
-	
+
 	curr->key = key;
 	curr->data = data;
 
@@ -302,54 +254,7 @@ icl_hash_update_insert(icl_hash_t *ht, void* key, void *data, void **olddata)
     }
     return -1;
 }
- /*
- //ho modificato la segnatura, potrei migliorarlo però
-int icl_hash_delete(icl_hash_t *ht, void* key) 
-{
-    icl_entry_t *curr, *prev;
-    unsigned int hash_val;
-	//MODIFICA
-	open_node *aux;
-	//------------
-
-    if(!ht || !key) return -1;
-    hash_val = (* ht->hash_function)(key) % ht->nbuckets;
-
-    prev = NULL;
-    for (curr=ht->buckets[hash_val]; curr != NULL; )  {
-        if ( ht->hash_key_compare(curr->key, key)) {
-            if (prev == NULL) {
-                ht->buckets[hash_val] = curr->next;
-            } else {
-                prev->next = curr->next;
-            }
-			
-			//** INIZIO MODIFICHE **
-            if (curr->key){
-				free(curr->key); //ATTENZIONE
-			}
-            if (curr->data){
-				if(((file_info *)curr->data)->cnt != NULL)
-					free(((file_info *)curr->data)->cnt);
-				while((aux = ((file_info *)curr->data)->open_owners) != NULL){
-					((file_info *)curr->data)->open_owners = ((file_info *)curr->data)->open_owners->next;
-					free(aux);
-					aux = ((file_info *)curr->data)->open_owners;
-				}
-			}
-			//** FINE MODIFICHE **
-						
-						
-            ht->nentries++;
-            free(curr);
-            return 0;
-        }
-        prev = curr;
-        curr = curr->next;
-    }
-    return -1;
-}*/
-
+ 
 /**
  * Free hash table structures (key and data are freed using functions).
  *
