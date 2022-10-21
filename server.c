@@ -122,6 +122,7 @@ typedef struct file_info{ //struttura dei valori nell'hashtable (storage)
 	int lst_op; //controllo per la writeFile
 	char cnt[MAX_SIZE]; //con char * ho maggiore flessibilità, ma più "difficile" gestione cnt (allocare/deallocare memoria, realloc buff di readF)
 	int cnt_sz;  
+	pthread_cond_t cond;
 } file_info;
 
 typedef struct file_repl{ //entry della coda per i rimpiazzamenti 
@@ -510,7 +511,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 	return 0;
 }
 
-void *init_thread(void *arg){ //CONSUMATORE
+static void *init_thread(void *arg){ //CONSUMATORE
 	int res;
 	int descr;
 	Queue_t *task_queue = ((th_w_arg *)arg)->task_queue; 
@@ -1247,6 +1248,11 @@ file_info *init_file(int lock_owner, int fd, int lst_op, char *cnt, int sz){
 	tmp->cnt_sz = sz;
 	if(sz > 0)
 		memcpy(tmp->cnt, cnt, sz); //controlla 
+	
+	if (pthread_cond_init(&tmp->cond, NULL) != 0) {
+		perror("mutex cond");
+		return NULL;
+	}
 
 	return tmp; //viene liberato quando faccio la delete_ht o destroy_ht 
 }
@@ -1363,6 +1369,9 @@ void print_deb(){
 
 //inizio in modo semplice, mettendo grandi sezioni critiche 
 
+
+//tra find e insert non posso eliminare la lock, o un thread potrebbe inserirlo
+//idem tra rimpiazzamento e delate (lì cerco i file da eliminare e poi li elimino, non posso rischiare qualcuno li modifichi
 int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 	file_info *data;
 	int n;
@@ -1373,6 +1382,7 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 	char *path_queue;
 	
 	Pthread_mutex_lock(&ht_mtx);
+	
 	if(icl_hash_find(hash_table, path) != NULL){ 
 		fprintf(stderr, "Impossibile ricreare file già esistente\n");
 		
@@ -1389,7 +1399,7 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 		return -1;
 	}
 	else{
-		
+//vedi se lo puoi fare fuori dalla sez critica
 		if((path_storage = malloc((strlen(path)+1)*sizeof(char))) == NULL){ 
 			perror("malloc");
 			int errno_copy = errno;
@@ -1399,7 +1409,24 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 		strncpy(path_storage, path, strlen(path)+1);
 		
 		data = init_file(-1, fd, 0, NULL, -1);  
-
+		if(data == NULL){
+			mess = "Err:creazioneFile";
+			n = strlen(mess) + 1;
+			if(writen(fd, &n, sizeof(int)) == -1){
+				perror("Errore nella write");
+				free_data_ht(data);
+				free(path_storage);
+				Pthread_mutex_unlock(&ht_mtx);
+				return -1;
+			}
+			if(writen(fd, mess, n) == -1)
+				perror("write server openFC");
+			free_data_ht(data);
+			free(path_storage);
+			Pthread_mutex_unlock(&ht_mtx);
+			return -1;
+		}
+///////////////////////////////////////////////////
 		file_repl *aux = NULL;
 		file_repl *prec = NULL;
 		int res;
@@ -1442,7 +1469,7 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 				Pthread_mutex_unlock(&log_mtx);
 				
 				int sz_cpy = aux->pnt->cnt_sz;
-				
+				pthread_cond_signal(&aux->pnt->cond); 
 				if(icl_hash_delete(hash_table, aux->path, &free, &free_data_ht) == -1){ 
 					fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
 					Pthread_mutex_unlock(&server_info_mtx);
@@ -1551,10 +1578,8 @@ int openFL(char *path, int fd){
 		return -2;
 	} 
 	else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro (per ora)
-		fprintf(stderr, "!!!!!!!!!!!!!!!! P: %ld\n", pthread_self());
-		while((tmp->lock_owner != -1 && tmp->lock_owner != fd)){
-			pthread_cond_wait(&ht_cond,&ht_mtx);
-		    fprintf(stderr, "!!!!!!!!!!!!!!!! D: %ld\n", pthread_self());
+		while(tmp->lock_owner != -1 && tmp->lock_owner != fd){
+			pthread_cond_wait(&tmp->cond,&ht_mtx);
 			
 			if((tmp = icl_hash_find(hash_table, path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
 			   //fprintf(stderr, "Impossibile fare lock su file non esistente\n"); 
@@ -1680,6 +1705,23 @@ int openFCL(char *path, int fd){
 			strncpy(path_storage, path, strlen(path)+1);
 			
 			data = init_file(fd, fd, 1, NULL, -1);  
+			if(data == NULL){
+				mess = "Err:creazioneFile";
+				n = strlen(mess) + 1;
+				if(writen(fd, &n, sizeof(int)) == -1){
+					perror("Errore nella write");
+					free_data_ht(data);
+					free(path_storage);
+					Pthread_mutex_unlock(&ht_mtx);
+					return -1;
+				}
+				if(writen(fd, mess, n) == -1)
+					perror("write server openFC");
+				free_data_ht(data);
+				free(path_storage);
+				Pthread_mutex_unlock(&ht_mtx);
+				return -1;
+			}
 
 			file_repl *aux = NULL;
 			file_repl *prec = NULL;
@@ -1724,7 +1766,7 @@ int openFCL(char *path, int fd){
 					fflush(log_file);
 					Pthread_mutex_unlock(&log_mtx);
 					int sz_cpy = aux->pnt->cnt_sz;
-					
+					pthread_cond_signal(&aux->pnt->cond); 
 					if(icl_hash_delete(hash_table, aux->path, &free, &free_data_ht) == -1){ 
 						fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
 						Pthread_mutex_unlock(&server_info_mtx);
@@ -1841,8 +1883,10 @@ int closeF(char *path, int fd){ //quando chiudo un file rilascio anche la lock s
 		
 		remove_elm(&(tmp->open_owners), fd);
 						
-		if(tmp->lock_owner == fd)
+		if(tmp->lock_owner == fd){
 			tmp->lock_owner = -1;
+			pthread_cond_signal(&tmp->cond); 
+		}
 		tmp->lst_op = 0;
 		Pthread_mutex_unlock(&ht_mtx);
 		
@@ -2013,6 +2057,7 @@ int writeF(char *path, char *cnt, int sz, int fd){
 				mess = "Err:fileTroppoGrande";
 			if(res == -1 || res == -2){
 				n = strlen(mess) + 1;
+				pthread_cond_signal(&tmp->cond); 
 				if(icl_hash_delete(hash_table, path, &free, &free_data_ht) == -1){ 
 					fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
 					Pthread_mutex_unlock(&server_info_mtx);
@@ -2054,6 +2099,7 @@ int writeF(char *path, char *cnt, int sz, int fd){
 					fflush(log_file);
 					Pthread_mutex_unlock(&log_mtx);
 					int sz_cpy = aux->pnt->cnt_sz;
+					pthread_cond_signal(&aux->pnt->cond); 
 					if(icl_hash_delete(hash_table, aux->path, &free, &free_data_ht) == -1){ 
 						fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
 						Pthread_mutex_unlock(&server_info_mtx); 
@@ -2133,19 +2179,17 @@ int lockF(char *path, int fd){
 		return -1;
 	}
 	else{
-		fprintf(stderr, "!!!!!!!!!!!!!!!! P: %ld\n", pthread_self());
-		while((tmp->lock_owner != -1 && tmp->lock_owner != fd)){
-			pthread_cond_wait(&ht_cond,&ht_mtx);
+
+		while(tmp->lock_owner != -1 && tmp->lock_owner != fd){
+			pthread_cond_wait(&tmp->cond,&ht_mtx);
 			if((tmp = icl_hash_find(hash_table, path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
 				fprintf(stderr, "Impossibile fare lock su file non esistente\n");
 				Pthread_mutex_unlock(&ht_mtx);
 				return -1;
 			}
 		}
-		fprintf(stderr, "!!!!!!!!!!!!!!!! D: %ld\n", pthread_self());
-		
 		tmp->lock_owner = fd;
-		tmp->lst_op = 0; //vedi se crea problemi alla openfile(O_create|o_lock)
+		tmp->lst_op = 0; 
 	}
 	Pthread_mutex_unlock(&ht_mtx);
 	
@@ -2196,7 +2240,7 @@ int unlockF(char *path, int fd){
 		tmp->lock_owner = -1;
 		tmp->lst_op = 0;
 		
-        pthread_cond_broadcast(&ht_cond);
+        pthread_cond_signal(&tmp->cond);
         Pthread_mutex_unlock(&ht_mtx);
 		n = 3;
 		if(writen(fd, &n, sizeof(int)) == -1){
@@ -2311,7 +2355,7 @@ int appendToF(char *path, char *cnt, int sz, int fd){
 					Pthread_mutex_unlock(&log_mtx);
 					
 					int sz_cpy = aux->pnt->cnt_sz;
-					
+					pthread_cond_signal(&aux->pnt->cond); 
 					if(icl_hash_delete(hash_table, aux->path, &free, &free_data_ht) == -1){ 
 						fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
 						Pthread_mutex_unlock(&server_info_mtx); 
@@ -2412,7 +2456,8 @@ int removeF(char *path, int fd){
 		old_sz = tmp->cnt_sz; //per inserire i byte rimossi nel file di log
 		
         //non aggiorno la repl_queue perchè semplicemente quando farà il pop controllerà se il file esiste ancora o meno
-		
+		pthread_cond_signal(&tmp->cond); //sveglio chi era in attesa della lock, questo dovrà SEMPRE ricontrollare che il file esista ancora 
+        //non so se va bene questa cosa di non fare immediatamente un'unlock dopo la signal 
 		if(icl_hash_delete(hash_table, path, &free, &free_data_ht) == -1){ 
 			fprintf(stderr, "Errore nella rimozione del file dallo storage\n");
 			if(writen(fd, "Err:rimozione", 14) == -1)
@@ -2421,8 +2466,7 @@ int removeF(char *path, int fd){
 			return -1;
 		}
 		
-		pthread_cond_broadcast(&ht_cond); //sveglio chi era in attesa della lock, questo dovrà SEMPRE ricontrollare che il file esista ancora 
-        Pthread_mutex_unlock(&ht_mtx);
+		Pthread_mutex_unlock(&ht_mtx);
 
 		Pthread_mutex_lock(&server_info_mtx);
 		n_files--; 
@@ -2551,13 +2595,15 @@ int clean_storage(int fd){
 	if (hash_table) {
 		for (k = 0; k < hash_table->nbuckets; k++)  {
 			for (entry = hash_table->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
-				if(((file_info *)value)->lock_owner == fd)
-					fd = -1; //guarda se devi fare qualche unlock particolare
 				remove_elm(&(((file_info *)value)->open_owners), fd);
+				if(((file_info *)value)->lock_owner == fd){
+					fd = -1; //guarda se devi fare qualche unlock particolare
+					pthread_cond_signal(&((file_info *)value)->cond);
+				}
 			}
 		}
 	}
-	Pthread_mutex_unlock(&ht_mtx);
+	Pthread_mutex_unlock(&ht_mtx); //guarda se va bene fare l'unlock solo ora 
 	
 	return 0;
 	
