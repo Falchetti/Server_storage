@@ -14,7 +14,10 @@
 #include "queue.h"
 
 #define DEBUG
-//#undef DEBUG
+#undef DEBUG
+
+#define DEBUG2
+#undef DEBUG2
 
 #define UNIX_PATH_MAX 108 //lunghezza massima path
 #define MAX_SIZE 10000 //lunghezza richiesta al server, riga log_file, contenuto file max memorizzato su server, vedi se quest'ultimo lo puoi rendere più flessibile (però ricorda che readF ti dà un buffer di taglia MAX_SIZE, vedi se lo devi riallocare in caso 
@@ -120,7 +123,7 @@ typedef struct file_info{ //struttura dei valori nell'hashtable (storage)
 	int lock_owner;
 	open_node *open_owners;
 	int lst_op; //controllo per la writeFile
-	char cnt[MAX_SIZE]; //con char * ho maggiore flessibilità, ma più "difficile" gestione cnt (allocare/deallocare memoria, realloc buff di readF)
+	char cnt[MAX_SIZE]; //con char * ho maggiore flessibilità, ma più "difficile" gestione cnt (allocare/deallocare memoria, realloc buff di readF) (scrivilo sulla relazione e gestiscilo (tento di scrivere/appendere file troppo grande)
 	int cnt_sz;  
 	pthread_cond_t cond;
 } file_info;
@@ -325,10 +328,6 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 		}
 		else if(strcmp(token, "disconnesso") == 0){//ancora da chiudere i file e aggiornarli
 			
-			Pthread_mutex_lock(&ht_mtx);
-
-			pthread_cond_broadcast(&ht_cond); //sveglio chi era in attesa della lock 
-			Pthread_mutex_unlock(&ht_mtx);
 			//devo creare una funz che scorre lo storage e toglie ovunque lock_owner (e open_owner, anche se questo risolto lato client, guarda client.c)
 			//oppure lato client mi tengo una lista di file dove ho la lock ownership e faccio una serie di richieste di unlock al server 
 			
@@ -503,7 +502,7 @@ int executeTask(int fd_c){ //qui faccio la read, capisco cosa devo fare, lo facc
 	}
 	#ifdef DEBUG
 		fprintf(stderr,"\n---HASHTABLE:\n");
-		print_deb(hash_table);
+		print_deb();
 	#endif	
 	
 	free(msg); 
@@ -534,7 +533,9 @@ static void *init_thread(void *arg){ //CONSUMATORE
 
 		free(fd);
 		if( res == -1){ //errori non fatali
-			fprintf(stderr, "Impossibile servire richiesta client %d\n", descr);
+			#ifdef DEBUG2
+				fprintf(stderr, "Impossibile servire richiesta client %d\n", descr);
+			#endif
 		}
 		
 		if( res == -2 ){ //disconnessione client fd 
@@ -1091,7 +1092,7 @@ int main(int argc, char *argv[]){
 	
 	fprintf(stdout, "\n\nLISTA FILE:\n\n");
 	fflush(stdout);
-	print_deb(hash_table);
+	print_deb();
 	
 	print_summ(log);  //chiudendo log, faccio di default anche fflush
 	
@@ -1376,7 +1377,6 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 	file_info *data;
 	int n;
 	char *mess;
-	int found = 0;
 	
 	char *path_storage;
 	char *path_queue;
@@ -1469,7 +1469,13 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 				Pthread_mutex_unlock(&log_mtx);
 				
 				int sz_cpy = aux->pnt->cnt_sz;
-				pthread_cond_signal(&aux->pnt->cond); 
+				pthread_cond_signal(&aux->pnt->cond);
+				#ifdef DEBUG2
+					Pthread_mutex_lock(&log_mtx);
+					fprintf(log_file,"%s %s -1 -1 %lu\n", "SIGNAL",  aux->path, pthread_self());
+					fflush(log_file);
+					Pthread_mutex_unlock(&log_mtx);
+				#endif
 				if(icl_hash_delete(hash_table, aux->path, &free, &free_data_ht) == -1){ 
 					fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
 					Pthread_mutex_unlock(&server_info_mtx);
@@ -1486,7 +1492,6 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 				free(prec->path);
 				free(prec);
 			}
-			found = 1;
 		}
 
 		if(icl_hash_insert(hash_table, path_storage, (void *) data) == NULL){
@@ -1495,8 +1500,6 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 			n = strlen(mess) + 1;
 			if(writen(fd, &n, sizeof(int)) == -1){
 				perror("Errore nella write");
-				if(found)
-					pthread_cond_broadcast(&ht_cond);
 				Pthread_mutex_unlock(&server_info_mtx);
 				Pthread_mutex_unlock(&ht_mtx);
 				free_data_ht(data);
@@ -1504,8 +1507,6 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 			}
 			if(writen(fd, mess, n) == -1)
 				perror("write server openFC");
-			if(found) 
-				pthread_cond_broadcast(&ht_cond);
 			Pthread_mutex_unlock(&server_info_mtx);
 			Pthread_mutex_unlock(&ht_mtx);
 			free_data_ht(data);
@@ -1517,8 +1518,6 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 		Pthread_mutex_unlock(&server_info_mtx);
 		
 		
-		if(found) 
-			pthread_cond_broadcast(&ht_cond);
 		Pthread_mutex_unlock(&ht_mtx);
 		
 		if((path_queue = malloc((strlen(path)+1)*sizeof(char))) == NULL){ 
@@ -1545,7 +1544,7 @@ int openFC(char *path, int fd){ //free(data) viene fatto da delete_ht/destroy_ht
 			return -1;
 		}
 		
-		#ifdef DEBUG
+		#ifdef DEBUG5
 			fprintf(stderr,"---OPEN CREATE FILE\n");
 			print_deb();
 		#endif 
@@ -1579,6 +1578,12 @@ int openFL(char *path, int fd){
 	} 
 	else{ //se sta cercando di aprire un file che ha già aperto, lo ignoro (per ora)
 		while(tmp->lock_owner != -1 && tmp->lock_owner != fd){
+			#ifdef DEBUG2
+				Pthread_mutex_lock(&log_mtx);
+				fprintf(log_file,"%s %s -1 -1 %lu\n", "WAIT",  path, pthread_self());
+				fflush(log_file);
+				Pthread_mutex_unlock(&log_mtx);
+			#endif
 			pthread_cond_wait(&tmp->cond,&ht_mtx);
 			
 			if((tmp = icl_hash_find(hash_table, path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
@@ -1619,7 +1624,7 @@ int openFL(char *path, int fd){
 		}	
 	}
 	
-	#ifdef DEBUG
+	#ifdef DEBUG5
 		fprintf(stderr,"---OPEN LOCKED FILE\n");
 		print_deb();
 	#endif
@@ -1663,7 +1668,7 @@ int openFO(char *path, int fd){
 			return -1;
 		}
 	}
-	#ifdef DEBUG
+	#ifdef DEBUG5
 		fprintf(stderr,"---OPEN FILE \n");
 		print_deb();
 	#endif
@@ -1675,7 +1680,6 @@ int openFO(char *path, int fd){
 int openFCL(char *path, int fd){
 		file_info *data;
 		int n;
-		int found = 0;
 		char *path_storage;
 	    char *path_queue;
 		char * mess;
@@ -1765,12 +1769,18 @@ int openFCL(char *path, int fd){
 					fprintf(log_file,"%s %s -1 %d %lu\n", "rimpiazzamento",  aux->path, aux->pnt->cnt_sz, pthread_self());
 					fflush(log_file);
 					Pthread_mutex_unlock(&log_mtx);
+					
 					int sz_cpy = aux->pnt->cnt_sz;
-					pthread_cond_signal(&aux->pnt->cond); 
+					pthread_cond_signal(&aux->pnt->cond);
+				#ifdef DEBUG2
+					Pthread_mutex_lock(&log_mtx);
+					fprintf(log_file,"%s %s -1 -1 %lu\n", "SIGNAL",  aux->path, pthread_self());
+					fflush(log_file);
+					Pthread_mutex_unlock(&log_mtx);
+				#endif					
 					if(icl_hash_delete(hash_table, aux->path, &free, &free_data_ht) == -1){ 
 						fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
 						Pthread_mutex_unlock(&server_info_mtx);
-						pthread_cond_broadcast(&ht_cond);
 						Pthread_mutex_unlock(&ht_mtx);
 						free_data_ht(data);
 						free(path_storage);
@@ -1783,7 +1793,6 @@ int openFCL(char *path, int fd){
 					free(prec);
 				
 				}
-				found = 1;
 			}
 	
 			if(icl_hash_insert(hash_table, path_storage, data) == NULL){
@@ -1792,8 +1801,6 @@ int openFCL(char *path, int fd){
 				if(writen(fd, &n, sizeof(int)) == -1){
 					perror("Errore nella write");
 					Pthread_mutex_unlock(&server_info_mtx);
-					if(found) 
-						pthread_cond_broadcast(&ht_cond);
 					Pthread_mutex_unlock(&ht_mtx);
 					free_data_ht(data);
 					return -1;
@@ -1801,7 +1808,7 @@ int openFCL(char *path, int fd){
 				
 				if(write(fd, "Err:inserimento", n) == -1)
 					perror("write server openFCL");
-				if(found) pthread_cond_broadcast(&ht_cond);
+				Pthread_mutex_unlock(&server_info_mtx);
 				Pthread_mutex_unlock(&ht_mtx);
 				free_data_ht(data);
 				return -1;
@@ -1809,8 +1816,6 @@ int openFCL(char *path, int fd){
 			
 			n_files++; 
 			Pthread_mutex_unlock(&server_info_mtx);
-			
-			if(found) pthread_cond_broadcast(&ht_cond);
 			Pthread_mutex_unlock(&ht_mtx);			
 			
 			
@@ -1839,9 +1844,9 @@ int openFCL(char *path, int fd){
 			
 		}
 		
-		#ifdef DEBUG
+		#ifdef DEBUG5
 			fprintf(stderr,"---OPEN CREATE LOCKED FILE\n");
-			print_deb(hash_table);
+			print_deb();
 		#endif
 		
 		return 0;
@@ -1886,6 +1891,12 @@ int closeF(char *path, int fd){ //quando chiudo un file rilascio anche la lock s
 		if(tmp->lock_owner == fd){
 			tmp->lock_owner = -1;
 			pthread_cond_signal(&tmp->cond); 
+							#ifdef DEBUG2
+					Pthread_mutex_lock(&log_mtx);
+					fprintf(log_file,"%s %s -1 -1 %lu\n", "SIGNAL",  path, pthread_self());
+					fflush(log_file);
+					Pthread_mutex_unlock(&log_mtx);
+				#endif
 		}
 		tmp->lst_op = 0;
 		Pthread_mutex_unlock(&ht_mtx);
@@ -1900,7 +1911,7 @@ int closeF(char *path, int fd){ //quando chiudo un file rilascio anche la lock s
 			return -1;
 		}
 	}
-	#ifdef DEBUG
+	#ifdef DEBUG5
 		fprintf(stderr,"---CLOSE FILE \n");
 		print_deb();
 	#endif
@@ -1975,7 +1986,7 @@ int readF(char *path, int fd){
 	fflush(log_file);
 	Pthread_mutex_unlock(&log_mtx);
 			
-	#ifdef DEBUG
+	#ifdef DEBUG5
 		fprintf(stderr,"---READ FILE \n");
 		print_deb();
 	#endif
@@ -1987,10 +1998,9 @@ int readF(char *path, int fd){
 int writeF(char *path, char *cnt, int sz, int fd){
 	file_info *tmp;	
 	int n;
-	int found = 0;
-	Pthread_mutex_lock(&ht_mtx);
 	char *mess;
 	
+	Pthread_mutex_lock(&ht_mtx);
 	if((tmp = icl_hash_find(hash_table, path)) == NULL){ 
 		fprintf(stderr, "Impossibile scrivere su file non esistente\n");
 		n = 21;
@@ -2058,10 +2068,15 @@ int writeF(char *path, char *cnt, int sz, int fd){
 			if(res == -1 || res == -2){
 				n = strlen(mess) + 1;
 				pthread_cond_signal(&tmp->cond); 
+								#ifdef DEBUG2
+					Pthread_mutex_lock(&log_mtx);
+					fprintf(log_file,"%s %s -1 -1 %lu\n", "SIGNAL", path, pthread_self());
+					fflush(log_file);
+					Pthread_mutex_unlock(&log_mtx);
+				#endif
 				if(icl_hash_delete(hash_table, path, &free, &free_data_ht) == -1){ 
 					fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
 					Pthread_mutex_unlock(&server_info_mtx);
-					pthread_cond_broadcast(&ht_cond);
 					Pthread_mutex_unlock(&ht_mtx);
 					return -1;
 				}
@@ -2098,12 +2113,18 @@ int writeF(char *path, char *cnt, int sz, int fd){
 					fprintf(log_file,"%s %s -1 %d %lu\n", "rimpiazzamento",  aux->path, aux->pnt->cnt_sz, pthread_self());
 					fflush(log_file);
 					Pthread_mutex_unlock(&log_mtx);
+					
 					int sz_cpy = aux->pnt->cnt_sz;
 					pthread_cond_signal(&aux->pnt->cond); 
+									#ifdef DEBUG2
+					Pthread_mutex_lock(&log_mtx);
+					fprintf(log_file,"%s %s -1 -1 %lu\n", "SIGNAL",  aux->path, pthread_self());
+					fflush(log_file);
+					Pthread_mutex_unlock(&log_mtx);
+				#endif
 					if(icl_hash_delete(hash_table, aux->path, &free, &free_data_ht) == -1){ 
 						fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
 						Pthread_mutex_unlock(&server_info_mtx); 
-						pthread_cond_broadcast(&ht_cond);
 						Pthread_mutex_unlock(&ht_mtx);
 						return -1;
 					}	
@@ -2114,7 +2135,6 @@ int writeF(char *path, char *cnt, int sz, int fd){
 					free(prec->path);
 					free(prec);
 				}
-				found = 1;
 			}
 			tmp->cnt_sz = sz;
 			if(sz > 0){
@@ -2125,12 +2145,11 @@ int writeF(char *path, char *cnt, int sz, int fd){
 			
 		}
 		else{
-			#ifdef DEBUG
+			#ifdef DEBUG3
 				fprintf(stderr, "richiesta scrittura di file vuoto\n");
 			#endif
 			sz = 0; //me ne assicuro 
 		}
-		if(found) pthread_cond_broadcast(&ht_cond);
 		Pthread_mutex_unlock(&ht_mtx);
 		
 		Pthread_mutex_lock(&log_mtx); 
@@ -2160,7 +2179,7 @@ int writeF(char *path, char *cnt, int sz, int fd){
 
 	}
 	
-	#ifdef DEBUG
+	#ifdef DEBUG5
 		fprintf(stderr,"---WRITE FILE \n");
 		print_deb();
 	#endif
@@ -2181,6 +2200,12 @@ int lockF(char *path, int fd){
 	else{
 
 		while(tmp->lock_owner != -1 && tmp->lock_owner != fd){
+			#ifdef DEBUG2
+				Pthread_mutex_lock(&log_mtx);
+				fprintf(log_file,"%s %s -1 -1 %lu\n", "WAIT",  path, pthread_self());
+				fflush(log_file);
+				Pthread_mutex_unlock(&log_mtx);
+			#endif
 			pthread_cond_wait(&tmp->cond,&ht_mtx);
 			if((tmp = icl_hash_find(hash_table, path)) == NULL){ //il file potrebbe essere stato rimosso dal detentore della lock 
 				fprintf(stderr, "Impossibile fare lock su file non esistente\n");
@@ -2193,7 +2218,7 @@ int lockF(char *path, int fd){
 	}
 	Pthread_mutex_unlock(&ht_mtx);
 	
-	#ifdef DEBUG
+	#ifdef DEBUG5
 		fprintf(stderr,"---LOCK FILE \n");
 		print_deb();
 	#endif
@@ -2241,6 +2266,12 @@ int unlockF(char *path, int fd){
 		tmp->lst_op = 0;
 		
         pthread_cond_signal(&tmp->cond);
+						#ifdef DEBUG2
+					Pthread_mutex_lock(&log_mtx);
+					fprintf(log_file,"%s %s -1 -1 %lu\n", "SIGNAL",  path, pthread_self());
+					fflush(log_file);
+					Pthread_mutex_unlock(&log_mtx);
+				#endif
         Pthread_mutex_unlock(&ht_mtx);
 		n = 3;
 		if(writen(fd, &n, sizeof(int)) == -1){
@@ -2252,7 +2283,7 @@ int unlockF(char *path, int fd){
 			return -1;
 		}
 	}
-	#ifdef DEBUG
+	#ifdef DEBUG5
 		fprintf(stderr,"---UNLOCK FILE \n");
 		print_deb();
 	#endif
@@ -2264,7 +2295,6 @@ int unlockF(char *path, int fd){
 int appendToF(char *path, char *cnt, int sz, int fd){
 	file_info *tmp;	
 	int res, n;
-	int found = 0;
 	char *mess;
 	
 	Pthread_mutex_lock(&ht_mtx);
@@ -2356,10 +2386,15 @@ int appendToF(char *path, char *cnt, int sz, int fd){
 					
 					int sz_cpy = aux->pnt->cnt_sz;
 					pthread_cond_signal(&aux->pnt->cond); 
+									#ifdef DEBUG2
+					Pthread_mutex_lock(&log_mtx);
+					fprintf(log_file,"%s %s -1 -1 %lu\n", "SIGNAL",  aux->path, pthread_self());
+					fflush(log_file);
+					Pthread_mutex_unlock(&log_mtx);
+				#endif
 					if(icl_hash_delete(hash_table, aux->path, &free, &free_data_ht) == -1){ 
 						fprintf(stderr, "Errore nella rimozione del file dallo storage, inrepl\n");
 						Pthread_mutex_unlock(&server_info_mtx); 
-						pthread_cond_broadcast(&ht_cond);
 						Pthread_mutex_unlock(&ht_mtx);
 						return -1;
 					}			
@@ -2372,7 +2407,6 @@ int appendToF(char *path, char *cnt, int sz, int fd){
 					free(prec->path);					
 					free(prec);
 				}
-				found = 1;
 			}
 			
 			if(sz > 0){ //prima era >= 
@@ -2382,10 +2416,12 @@ int appendToF(char *path, char *cnt, int sz, int fd){
 			}
 			Pthread_mutex_unlock(&server_info_mtx); 
 	    }
-		else
-			fprintf(stderr, "richiesta scrittura di file vuoto\n");
-		
-		if(found) pthread_cond_broadcast(&ht_cond);
+		else{
+			#ifdef DEBUG3
+				fprintf(stderr, "richiesta scrittura di file vuoto\n");
+			#endif
+		}
+
 		Pthread_mutex_unlock(&ht_mtx);
 		
 		Pthread_mutex_lock(&log_mtx); 
@@ -2457,7 +2493,13 @@ int removeF(char *path, int fd){
 		
         //non aggiorno la repl_queue perchè semplicemente quando farà il pop controllerà se il file esiste ancora o meno
 		pthread_cond_signal(&tmp->cond); //sveglio chi era in attesa della lock, questo dovrà SEMPRE ricontrollare che il file esista ancora 
-        //non so se va bene questa cosa di non fare immediatamente un'unlock dopo la signal 
+				#ifdef DEBUG2
+					Pthread_mutex_lock(&log_mtx);
+					fprintf(log_file,"%s %s -1 -1 %lu\n", "SIGNAL",  path, pthread_self());
+					fflush(log_file);
+					Pthread_mutex_unlock(&log_mtx);
+				#endif       
+	   //non so se va bene questa cosa di non fare immediatamente un'unlock dopo la signal 
 		if(icl_hash_delete(hash_table, path, &free, &free_data_ht) == -1){ 
 			fprintf(stderr, "Errore nella rimozione del file dallo storage\n");
 			if(writen(fd, "Err:rimozione", 14) == -1)
@@ -2488,7 +2530,7 @@ int removeF(char *path, int fd){
 			return -1;
 		}
 		
-		#ifdef DEBUG
+		#ifdef DEBUG5
 			fprintf(stderr,"---REMOVE FILE\n");
 			print_deb();
 		#endif 
@@ -2522,16 +2564,8 @@ int readNF(int fd, int n){
 					Pthread_mutex_unlock(&ht_mtx);
 					exit(errno_copy);
 				}
-				if((file->path = malloc(sizeof(char)*(strlen(key)+1))) == NULL){
-					perror("malloc");
-					int errno_copy = errno;
-					fprintf(stderr,"FATAL ERROR: malloc\n");
-					Pthread_mutex_unlock(&ht_mtx);
-					free(file);
-					exit(errno_copy);
-				}
 				
-				strncpy(file->path, key, strlen(key)+1);
+				file->path = key;
 				file->pnt = ((file_info *)value);
 				
 				if(file_sender(file, fd) != -1){
@@ -2544,7 +2578,6 @@ int readNF(int fd, int n){
 				if(!all)
 					n--;
 				
-				free(file->path);
 				free(file);
 				
 			}
@@ -2555,7 +2588,6 @@ int readNF(int fd, int n){
 
 	Pthread_mutex_unlock(&ht_mtx);
 	
-
     n = 2;
 	if(writen(fd, &n, sizeof(int)) == -1){
 		perror("Errore nella write");
@@ -2576,9 +2608,9 @@ int readNF(int fd, int n){
 		return -1;
 	}
    
-	#ifdef DEBUG
+	#ifdef DEBUG5
 		fprintf(stderr,"---SEND N FILES\n");
-		print_deb(hash_table);
+		print_deb();
 	#endif
 	
 	
@@ -2597,8 +2629,14 @@ int clean_storage(int fd){
 			for (entry = hash_table->buckets[k]; entry != NULL && ((key = entry->key) != NULL) && ((value = entry->data) != NULL); entry = entry->next){
 				remove_elm(&(((file_info *)value)->open_owners), fd);
 				if(((file_info *)value)->lock_owner == fd){
-					fd = -1; //guarda se devi fare qualche unlock particolare
+					((file_info *)value)->lock_owner = -1; //guarda se devi fare qualche unlock particolare
 					pthread_cond_signal(&((file_info *)value)->cond);
+									#ifdef DEBUG2
+					Pthread_mutex_lock(&log_mtx);
+					fprintf(log_file,"%s %s -1 -1 %lu\n", "SIGNAL",  (char *) key, pthread_self());
+					fflush(log_file);
+					Pthread_mutex_unlock(&log_mtx);
+				#endif
 				}
 			}
 		}
@@ -2688,8 +2726,10 @@ int st_repl(int dim, int fd, char *path, file_repl **list, int isCreate){
 				found = 0;
 				while(!found){
 					exp = pop(files_queue); //dovrei fare un controllo per quando finisco la coda forse
-					if((tmp = icl_hash_find(hash_table, exp)) == NULL) //è stato eliminato dallo storage 
+					if((tmp = icl_hash_find(hash_table, exp)) == NULL){ //è stato eliminato dallo storage 
 						free(exp);
+						continue;
+					}
 					if(strncmp(exp, path, UNIX_PATH_MAX) == 0){
 						if(!found_self){
 							push(files_queue, exp);
@@ -2705,7 +2745,7 @@ int st_repl(int dim, int fd, char *path, file_repl **list, int isCreate){
 					else{
 						found = 1;
 						//free(exp);
-						fprintf(stderr, "ESPULSO: %s\n", exp);
+						//fprintf(stderr, "ESPULSO: %s\n", exp);
 						if(*list == NULL){
 							*list = malloc(sizeof(file_repl));
 							(*list)->path = exp;
@@ -2732,8 +2772,10 @@ int st_repl(int dim, int fd, char *path, file_repl **list, int isCreate){
 int file_sender(file_repl *file, int fd){
 		
 	int msg_sz;
-	
+	//fprintf(stderr, "path: %s\n", file->path);
 	msg_sz = strlen(file->path) +1;
+	
+	//fprintf(stderr, "size_path: %d\n", msg_sz);
 	if(writen(fd, &msg_sz, sizeof(int)) == -1){
 		perror("Errore nella write1");
 		return -1;

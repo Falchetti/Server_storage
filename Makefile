@@ -4,10 +4,10 @@ SHELL = /bin/bash
 CC = gcc 
 
 #qui da aggiungere c99 
-CFLAGS = -Wall -pedantic -g 
+CFLAGS = -Wall -Werror -pedantic -g 
 
 #TARGETS = server client clean test
-TARGETS = server client clean test2
+TARGETS = server client clean test3
 
 #genera tutti gli eseguibili
 all : $(TARGETS) 
@@ -55,19 +55,19 @@ test4 :
 # --tool=memcheck --track-origins=yes	--show-leak-kinds=all
 	
 test1 : 
-	valgrind --leak-check=full ./server -k config1.txt &
+	valgrind --leak-check=full ./server -k config_1.txt &
 	chmod +x test_1.sh 
 	./test_1.sh
 	killall -s SIGHUP memcheck-amd64-
 
 test2 : 
-	./server -k config2.txt  &
+	./server -k config_2.txt  &
 	chmod +x test_2.sh 
 	./test_2.sh
 	kill -SIGHUP `pidof server`
 	
 test3 : 
-	./server -k config3.txt  &
+	./server -k config_3.txt  &
 	chmod +x test_3.sh 
 	./test_3.sh
 	kill -SIGINT `pidof server`

@@ -783,6 +783,7 @@ int file_receiver(const char *dirname, int fd){
 	
 
 	while(!stop){
+		int found = 0;
 		
 		if(readn(fd, &sz_msg, sizeof(int)) == -1){ 
 			perror("read socket lato client");
@@ -808,13 +809,13 @@ int file_receiver(const char *dirname, int fd){
 
 		if(strncmp(path, "$", UNIX_PATH_MAX) != 0){
 			k++;
-			
 			if(readn(fd, &sz_msg, sizeof(int)) == -1){ 
 				perror("read socket lato client");
 				free(path);
 				return -1;
 			}
 			if(sz_msg > 0){
+				found = 1;
 				if((cnt = malloc(sz_msg*sizeof(char))) == NULL){
 					perror("malloc");
 					int errno_copy = errno;
@@ -833,11 +834,13 @@ int file_receiver(const char *dirname, int fd){
 				if(save_file(dirname, path, cnt, sz_msg) == -1){
 					perror("Errore in savefile");
 					free(path);
-					free(cnt);
+					if(found)
+						free(cnt);
 					return -1;
 				}
-			}	
-			free(cnt);
+			}
+			if(found)
+				free(cnt);
 		}
 		else{
 			stop = 1; 

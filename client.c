@@ -446,7 +446,7 @@ int main(int argc, char *argv[]){
 					
 						res = unlockFile(token);
 						if(found_p)
-							print_p("Unock file", &token, 1, res, -1, -1);
+							print_p("Unlock file", &token, 1, res, -1, -1);
 						if(res == -1){
 							errno = errno_copy;
 							perror("Errore in unlockFile [-u]"); //ignoro la richiesta e vado alla successiva
