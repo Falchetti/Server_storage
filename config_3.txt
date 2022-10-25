@@ -1,5 +1,0 @@
-DIM:32000
-NFILES:100
-NWORKERS:10
-SOCKET:/home/giulia/File_server_storage/Server_storage/mysock
-LOG:/home/giulia/File_server_storage/Server_storage/log
