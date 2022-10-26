@@ -1,5 +1,7 @@
 #!/bin/bash
 
+#DEBUG2 deve essere definito nel file server.c
+
 if [ $# != 1 ]; then
     echo "Deve essere passato 1 file .log come argomento" 
     exit 0

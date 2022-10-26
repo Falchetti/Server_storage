@@ -82,7 +82,7 @@ cat $1 | grep "writeF\|append\|remove\|rimpiazzamento" | cut -d" " -f 1,3,4 > $t
 sum=0
 cnt=0
 cnt_max=0
-exec 3<$tmpfile   ì 
+exec 3<$tmpfile
 while IFS=" " read -u 3 line; do #leggo riga per riga
 	op=$(echo $line | tr -s " " | cut -d" " -f 1) #(tipo di operazione)
 	nBW=$(echo $line | tr -s " " | cut -d" " -f 2) #(bytes scritti)
