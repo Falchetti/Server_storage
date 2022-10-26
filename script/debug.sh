@@ -38,9 +38,9 @@ echo "cnt ${NAMES[i]} è uguale a $cnt"
 done
 
 
-
-cnt=$(grep "open_connection" $1 | wc -l) #il \ è il carattere di escape per far riconoscere | come carattere speciale
+cnt=$(grep "open_connection" $1 | wc -l) 
 echo "N. di open_connection: " $cnt 
 
-cnt=$(grep "close_connection" $1 | wc -l) #il \ è il carattere di escape per far riconoscere | come carattere speciale
+cnt=$(grep "close_connection" $1 | wc -l) 
 echo "N. di close_connection: " $cnt 
+

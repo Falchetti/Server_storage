@@ -10,15 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#if !defined(BUFSIZE)
-#define BUFSIZE 256
-#endif
-//#if !defined(SOCKNAME)
-//#define SOCKNAME     "./cs_sock"
-//#endif
-#if !defined(MAXBACKLOG)
-#define MAXBACKLOG   32
-#endif
+#define MAX_REQ   20 //n. max di richieste in coda 
 
 /** Evita letture parziali
  *
@@ -35,7 +27,7 @@ static inline int readn(long fd, void *buf, size_t size) {
 	    if (errno == EINTR) continue;
 	    return -1;
 	}
-	if (r == 0) return 0;   // EOF
+	if (r == 0) return 0;  
         left    -= r;
 	bufptr  += r;
     }

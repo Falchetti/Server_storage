@@ -1,5 +1,5 @@
 DIM:32000
 NFILES:100
-NWORKERS:10
+NWORKERS:8
 SOCKET:./mysock.sk
 LOG:./log.txt

@@ -89,6 +89,24 @@ static inline void print_error(const char * str, ...) {
  * \return  0 ok  1 non e' un numbero   2 overflow/underflow
  */
  
+static inline int isNumber(const char* s, int* n) { //MODIFICATO (long * into int *)
+  if (s==NULL) return 1;  
+  if (strlen(s)==0) return 1;
+  char* e = NULL;
+  errno=0;
+  long val = strtol(s, &e, 10);
+  if (errno == ERANGE) return 2;    // overflow/underflow
+  if (e != NULL && *e == (char)0) {
+    *n = val;
+    return 0;   // successo 
+  }
+  return 1;   // non e' un numero
+}
+
+/** 
+ * \brief Funzioni pthread_mutex_lock con verifica valore di ritorno.
+ */
+
 static inline void Pthread_mutex_lock (pthread_mutex_t* mtx){
     int err;
     if ((err = pthread_mutex_lock(mtx)) != 0 ){
@@ -105,19 +123,6 @@ static inline void Pthread_mutex_unlock (pthread_mutex_t* mtx){
         perror("unlock");
         pthread_exit((void*)&errno);
     }
-}
-static inline int isNumber(const char* s, int* n) { //MODIFICATO (long * into int *)
-  if (s==NULL) return 1;  
-  if (strlen(s)==0) return 1;
-  char* e = NULL;
-  errno=0;
-  long val = strtol(s, &e, 10);
-  if (errno == ERANGE) return 2;    // overflow/underflow
-  if (e != NULL && *e == (char)0) {
-    *n = val;
-    return 0;   // successo 
-  }
-  return 1;   // non e' un numero
 }
 
 #define LOCK(l)      if (pthread_mutex_lock(l)!=0)        { \

@@ -6,14 +6,11 @@
 
 #include <util.h>
 #include <queue.h>
-//poi crea una cartella includese fatta per bene, metti qui
-//le parentesi angolate e nel makefile il -I con il percorso
 
 /**
  * @file queue.c
  * @brief File di implementazione dell'interfaccia per la coda
  */
-
 
 
 /* ------------------- funzioni di utilita' -------------------- */
@@ -62,7 +59,7 @@ void deleteQueue(Queue_t *q) {
 	}
 	freeNode(p);
     }
-	free(q->head->data); ////MODIFICATO
+	free(q->head->data); //Modificato
     if (q->head) freeNode((void*)q->head);
     if (&q->qlock)  pthread_mutex_destroy(&q->qlock);
     if (&q->qcond)  pthread_cond_destroy(&q->qcond);
@@ -70,7 +67,6 @@ void deleteQueue(Queue_t *q) {
 }
 
 int push(Queue_t *q, void *data) {
-	//fprintf(stderr, "QUEUE PUSH: %s\n", (char *)data);
     if ((q == NULL) || (data == NULL)) { errno= EINVAL; return -1;}
     Node_t *n = allocNode();
     if (!n) return -1;
@@ -98,12 +94,11 @@ void *pop(Queue_t *q) {
     Node_t *n  = (Node_t *)q->head;
     void *data = (q->head->next)->data;
     q->head    = q->head->next;
-	q->head->data = NULL; //MODIFICATO 
+	q->head->data = NULL; //Modificato 
     q->qlen   -= 1;
     assert(q->qlen>=0);
     UnlockQueue(q);
     freeNode(n);
-	//fprintf(stderr, "QUEUE POP: %s\n", (char *)data);
     return data;
 } 
 // NOTA: in questa funzione si puo' accedere a q->qlen NON in mutua esclusione

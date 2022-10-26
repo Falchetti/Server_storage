@@ -3,29 +3,23 @@ SHELL = /bin/bash
 CC = gcc 
 
 CFLAGS = -Wall -pedantic -I $(INC)
+#da usare nei compilatori dove è necessario specificare -std=c99:
 #CFLAGS = -Wall -pedantic -std=c99 -D_GNU_SOURCE=1 -I $(INC)
-
-TARGETS = clean bin/server bin/client test1
 
 INC = ./includes/
 LIB =./lib/
-
 EXE = bin/server bin/client
 
 #genera tutti gli eseguibili
-all : $(TARGETS) 
-#poi qua ci andrà exe e targets verrà eliminato 
+all : $(EXE) 
 
-.PHONY : clean, , cleanall, test1, test2, test3
+.PHONY : clean, cleanall, test1, test2, test3, statistiche
 
 bin/server : objs/server.o objs/icl_hash.o objs/queue.o objs/list.o
 	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 
 objs/server.o : src/server.c $(INC)icl_hash.h $(INC)queue.h $(INC)conn.h $(INC)util.h $(INC)defines.h $(INC)list.h 
 	$(CC) $(CFLAGS) -c $< -o $@ -lpthread
-
-#così se modifico solo icl_hash questo modulo oggetto non viene ricreato 
-#MA questo sarebbe vero solo se non cancellassi con clean i moduli oggetto 
 	
 objs/queue.o : src/queue.c $(INC)queue.h $(INC)util.h 
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -54,7 +48,7 @@ clean :
 	-rm -f *.sk 
 
 cleanall : 
-	-rm -f *.sk objs/*.o core *.~ $(EXE) log.txt lib/*.a 
+	-rm -f *.sk objs/*.o $(EXE) log.txt lib/*.a 
 	-rm -r test_files/output_dir/*
 	
 test1 : $(EXE)
@@ -74,3 +68,7 @@ test3 : $(EXE)
 	chmod +x ./script/test_3.sh 
 	./script/test_3.sh
 	kill -SIGINT `pidof server`
+	
+statistiche : 
+	chmod +x ./script/statistiche.sh 
+	./script/statistiche.sh log.txt 

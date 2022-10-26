@@ -4,6 +4,12 @@
 
 #include <list.h>
 
+/**
+ * @file list.c
+ * @brief File di implementazione dell'interfaccia per la lista 
+ */
+
+
 int insert_head(open_node **list, int info){
 	open_node *tmp, *new;
 	open_node *aux = *list;
@@ -26,7 +32,7 @@ int insert_head(open_node **list, int info){
 				aux = aux->next;
 		}
 		
-		if((tmp = malloc(sizeof(open_node))) == NULL){ //liberato da free_data_ht
+		if((tmp = malloc(sizeof(open_node))) == NULL){ 
 			perror("malloc");
 			int errno_copy = errno;
 			fprintf(stderr,"FATAL ERROR: malloc\n");

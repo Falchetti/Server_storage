@@ -12,28 +12,30 @@
 
 #include <api.h>
 #include <conn.h>
-#include <defines.h> //
+#include <defines.h> 
  
 #define DEBUG
 #undef DEBUG
 
+/**
+ * @file api.c
+ * @brief File di implementazione dell'interfaccia per la comunicazione con lo storage  
+ */
 
-// usare scelta coerente per strcmp , strcat e strcpy
 
 //variabili globali 
 int fd_s = -1; //fd socket
 char sck_name[UNIX_PATH_MAX]; //nome del socket
 
-//funzioni di supporto 
+/* ------------------- funzioni di supporto -------------------- */
 int isTimeout(struct timespec);  
-int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt);
-int file_receiver(const char *dirname, int fd);
 int comunic_cs(char *cmd, const char *pathname, int *err);
+int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt);
+int file_receiver(const char *dirname);
 int error_handler(char *msg, int sz);
 
-//non devo controllare che la connessione sia stata già aperta
-//perchè -f lo posso chiamare solo una volta e solo lì invoco openConnection
-//inoltre la connessione è unica per ogni client 
+/* ------------------- interfaccia ------------------ */
+
 int openConnection(const char* sockname, int msec, const struct timespec abstime){ 
 
 	int t = 0;
@@ -43,26 +45,28 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 		return -1;
 	}
 	
-	if((fd_s = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){ //errno lo setta socket
+	if((fd_s = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){ 
 		perror("Errore in socket [openConnection]");
 		return -1;
 	}
 	
 	struct sockaddr_un sa;
-	memset(&sa, 0, sizeof(struct sockaddr_un)); //lo azzero 
+	memset(&sa, 0, sizeof(struct sockaddr_un)); 
 	strncpy(sa.sun_path, sockname, UNIX_PATH_MAX); 
 	sa.sun_family = AF_UNIX;
 	
+	//tentativi di connessione 
 	while ( (connect(fd_s, (struct sockaddr *) &sa, sizeof(sa)) == -1) && ((t = isTimeout(abstime)) == 0) )
-		sleep(msec/1000); //attesa attiva
+		sleep(msec/1000); 
 			
 	if (t){
 		errno = ETIMEDOUT; 
 		perror("Errore, timeout sopraggiunto [openConnection]");
 		return -1;
-	}			
+	}		
 	
-	strncpy(sck_name, sockname, UNIX_PATH_MAX); //memorizzo il nome del socket in una var globale
+	//memorizza il nome del socket in una var globale
+	strncpy(sck_name, sockname, UNIX_PATH_MAX); 
 	
 	return 0;
 }
@@ -70,10 +74,11 @@ int openConnection(const char* sockname, int msec, const struct timespec abstime
 int closeConnection(const char *sockname){
 
 	if(strncmp(sockname, sck_name, UNIX_PATH_MAX) == 0){ 	
-		if(fd_s != -1){ //mi assicuro che non fosse già stato chiuso (se è già stato chiuso ignoro la richiesta)
+		if(fd_s != -1){ 
 			char *mess = "disconnesso";
 		    int n = strlen(mess) + 1; 
 			
+			//invio richiesta al server 
 			if(writen(fd_s, &n, sizeof(int)) == -1){
 				perror("Errore nella write [closeConnection]");
 				return -1;
@@ -82,12 +87,13 @@ int closeConnection(const char *sockname){
 				perror("Errore nella write");
 				return -1;
 			}
-			
+			//chiusura descrittore 
 		    if(close(fd_s) == -1){
 				perror("Errore nella close [closeConnection]");
 				return -1;
 			}
 		}
+		//segnala che il descrittore è chiuso
 		fd_s = -1; 
 	}
 	else{
@@ -104,7 +110,7 @@ int openFile(const char *pathname, int flags){
 	int err = 0;
 	int res;
 	
-	if(fd_s != -1){ //la connessione è aperta? 
+	if(fd_s != -1){ //controlla che la connessione sia aperta
 		
 		switch(flags){
 			case O_OPEN: 
@@ -132,7 +138,8 @@ int openFile(const char *pathname, int flags){
 				errno = EINVAL;
 				return -1; 
 		}
-
+		
+		//comunicazione con il server 
 		res = comunic_cs(cmd, pathname, &err);
 		errno = err; 
 		if(res < 0)
@@ -147,10 +154,11 @@ int openFile(const char *pathname, int flags){
 	return 0;	
 }
 
-int closeFile(const char *pathname){ //quando chiudo un file, rilascio la lock, se la possiedo
+int closeFile(const char *pathname){ 
 						
 	if(fd_s != -1){
 		int err = 0;
+		//comunicazione con il server
 		int res = comunic_cs("closef", pathname, &err);
 		errno = err;
 		if(res < 0)
@@ -165,10 +173,11 @@ int closeFile(const char *pathname){ //quando chiudo un file, rilascio la lock, 
 return 0; 
 }
 
-int lockFile(const char *pathname){ //posso fare lock/unlock su file senza averlo prima aperto 
+int lockFile(const char *pathname){ 
 	
 	if(fd_s != -1){
 		int err = 0;
+		//comunicazione con il server
 		int res = comunic_cs("lockf", pathname, &err);
 		errno = err;
 		if(res < 0)
@@ -187,6 +196,7 @@ int unlockFile(const char *pathname){
 	
 	if(fd_s != -1){
 		int err = 0;
+		//comunicazione con il server
 		int res = comunic_cs("unlockf", pathname, &err);
 		errno = err;
 		if(res < 0)
@@ -201,10 +211,11 @@ int unlockFile(const char *pathname){
 	return 0;
 }
 
-int removeFile(const char *pathname){ //rilascia le lock (posso rimuovere file senza aprirlo)
+int removeFile(const char *pathname){ 
 	
 	if(fd_s != -1){
 		int err = 0;
+		//comunicazione con il server
 		int res = comunic_cs("removef", pathname, &err);
 		errno = err;
 		if(res < 0)
@@ -224,8 +235,8 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 	int sz_msg;
 	char *msg ;
 	
-	if(fd_s != -1){ //controllo se sono connesso 
-
+	if(fd_s != -1){ 
+		//invio richiesta al server 
 		if((msg = malloc(MAX_SIZE*sizeof(char))) == NULL){
 			perror("malloc");
 			int errno_copy = errno;
@@ -233,13 +244,14 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 			exit(errno_copy);
 		}
 		if(msg_sender(msg, "readf", pathname, -1, NULL) == -1){
-			perror("Errore in invio messaggio al server"); //msg_sender setta errno 
+			perror("Errore in invio messaggio al server"); 
 			free(msg);
 			return -1;
 		}			
 		
 		free(msg);
 		
+		//lettura contenuto file ricevuto dal server (se sz_cnt positiva)
 		if(readn(fd_s, &sz_msg, sizeof(int)) == -1){
 			perror("read socket lato client");
 			return -1; 
@@ -256,6 +268,7 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 				free(msg);
 				return -1; 
 			}
+			//controlla se è stato ricevuto messaggio d'errore
 			if(strncmp(msg, "Err:", 4) == 0){ 
 				#ifdef DEBUG
 					fprintf(stderr, "Err in readF, msg server: %s\n", msg);
@@ -264,6 +277,7 @@ int readFile(const char *pathname, void **buf, size_t *size) {
 				free(msg);
 				return -1;
 			}
+			//salvataggio contenuto file 
 			memcpy(*buf, msg, sz_msg);
 			*size = sz_msg;
 			free(msg);
@@ -299,8 +313,9 @@ int writeFile(const char *pathname, const char* dirname) {
 			fprintf(stderr,"FATAL ERROR: malloc\n");
 			exit(errno_copy);
 		}
-
-		if((fp = fopen(pathname, "rb")) == NULL){ //Se il file non esiste si esce con errore
+		//apertura file da scrivere
+		//se il file non esiste si esce con errore
+		if((fp = fopen(pathname, "rb")) == NULL){ 
 			perror("fopen writeFile"); 
             free(msg);
             return -1;
@@ -308,7 +323,7 @@ int writeFile(const char *pathname, const char* dirname) {
 		
 		stat(pathname, &st);
         size = st.st_size;
-		
+		//salvataggio contenuto file 
 		if((cnt = malloc(size*sizeof(char))) == NULL){
 			perror("malloc");
 			errno_copy = errno;
@@ -332,14 +347,14 @@ int writeFile(const char *pathname, const char* dirname) {
 				return -1;
 			}
 		}
-	
+	    //chiusura file 
 		if(fclose(fp)){
 			perror("fclose writeFile");
 			free(msg);
 			free(cnt);
 			return -1;
 		}
-		
+		//invio richiesta al server 
 		if(msg_sender(msg, "writef", pathname, size, cnt) == -1){
 			perror("Errore in invio messaggio al server");
 			free(msg);
@@ -347,14 +362,14 @@ int writeFile(const char *pathname, const char* dirname) {
 			return -1;
 		}
 		free(cnt);
-			
-		n = file_receiver(dirname, fd_s); 
+		//recezione file espulsi 	
+		n = file_receiver(dirname); 
 		
 		if(n < 0){
 			free(msg);
 			return -1;
 		}
-		
+		//recezione messaggio di esito 
 		if(readn(fd_s, &msg_sz, sizeof(int)) == -1){ 
 			perror("read socket lato client");
 			free(msg);
@@ -365,6 +380,7 @@ int writeFile(const char *pathname, const char* dirname) {
 			free(msg);
 			return -1;
 	    }
+		//controlla se è stato ricevuto un messaggio d'errore 
 		if(strncmp(msg, "Ok", msg_sz) != 0){ 
 			#ifdef DEBUG
 				fprintf(stderr, "errore writeFile, msg del server: %s\n", msg);
@@ -398,20 +414,21 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char* dirna
 			fprintf(stderr,"FATAL ERROR: malloc\n");
 			exit(errno_copy);
 		}
-		
+		//invio richiesta al server 
 		if(msg_sender(msg, "appendTof", pathname, size, buf) == -1){
 			perror("Errore in invio messaggio al server");
 			free(msg);
 			return -1;
 		}
-		
-		k = file_receiver(dirname, fd_s); 
+		//ricezione file espulsi dal server 
+		k = file_receiver(dirname); 
 
 		
 		if(k < 0){
 			free(msg);
 			return -1; 
 		}
+		//ricezione messaggio di esito 
 		if(readn(fd_s, &msg_sz, sizeof(int)) == -1){ 
 			perror("read socket lato client");
 			free(msg);
@@ -422,6 +439,7 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char* dirna
 			free(msg);
 			return -1;
 	    }
+		//controlla se si tratta di un messaggio d'errore 
 		if(strncmp(msg, "Ok", msg_sz) != 0){ 
 			#ifdef DEBUG
 				fprintf(stderr, "errore appendToFile, msg del server: %s\n", msg);
@@ -446,14 +464,14 @@ int readNFile(int n, const char *dirname){
 	int k, msg_sz;
 	char *msg;
 	
-	if(fd_s != -1){ //ci pensa il server ad aprire e chiudere i file in questo caso 
+	if(fd_s != -1){ 
 		if((msg = malloc(MAX_SIZE*sizeof(char))) == NULL){
 			perror("malloc");
 			int errno_copy = errno;
 			fprintf(stderr,"FATAL ERROR: malloc\n");
 			exit(errno_copy);
 		}
-
+		//trasforma numero di file da leggere in stringa 
 		char *str;
 		if((str = malloc(MAX_SIZE*sizeof(char))) == NULL){
 			perror("malloc");
@@ -467,20 +485,22 @@ int readNFile(int n, const char *dirname){
 		int buf_sz = snprintf(NULL, 0, "%d", n);
 		snprintf(str, buf_sz + 1, "%d", n);
 		
-		if(msg_sender(msg, "readNf", str, -1, NULL) == -1){ //cmd;n 
+		//invio richiesta al server
+		if(msg_sender(msg, "readNf", str, -1, NULL) == -1){ 
 			perror("Errore in invio messaggio al server");
 			free(msg);
 			free(str);
 			return -1;
 		}
 		free(str);
-		
-		k = file_receiver(dirname, fd_s);	
+		//ricezione file letti 
+		k = file_receiver(dirname);	
 		
 		if(k < 0){
 			free(msg);
 			return -1;
 		}
+		//ricezione messaggio di esito
 		if(readn(fd_s, &msg_sz, sizeof(int)) == -1){ 
 			perror("read socket lato client");
 			free(msg);
@@ -491,6 +511,7 @@ int readNFile(int n, const char *dirname){
 			free(msg);
 			return -1;
 	    }
+		//controlla se è un messaggio d'errore 
 		if(strncmp(msg, "Ok", msg_sz) != 0){ 
 			#ifdef DEBUG
 				fprintf(stderr, "errore readNFile, msg del server: %s\n", msg);
@@ -508,11 +529,19 @@ int readNFile(int n, const char *dirname){
 
 	free(msg);
 	
-	return k; //Da specifiche: restituisco il numero di file letti 
+	//restituisce il numero di file letti
+	return k;  
 }
 
 
-//controllo se l'orario a è maggiore di b, attenzione: il return value 0 sta per FALSO, non success 
+/* ------------------- funzioni di supporto -------------------- */
+
+/** Controlla se l'orario specificato nel parametro è successivo a quello attuale
+ *   \param orario da confrontare 
+ *  
+ *   \retval 1 in caso di successo (true)
+ *   \retval 0 in caso di fallimento (false)
+ */
 int isTimeout(struct timespec b){ 
 	struct timespec a;
     clock_gettime(CLOCK_REALTIME, &a);
@@ -529,6 +558,13 @@ int isTimeout(struct timespec b){
         return 0;
 }
 
+/** Trasforma il messaggio ricevuto in un codice d'errore 
+ *   \param messaggio da tradurre 
+ *   \param taglia del messaggio  
+ *  
+ *   \retval codice d'errore in caso di successo
+ *   \retval -1 in caso di errore
+ */
 int error_handler(char *msg, int sz){
 	if(strncmp(msg, "Err:FileEsistente", sz) == 0){
 		return EEXIST;
@@ -578,10 +614,22 @@ int error_handler(char *msg, int sz){
 	else if(strncmp(msg, "Err:PushReplQueue", sz) == 0){
 		return ENOMEM;
 	}
+	else if(strncmp(msg, "Err:ParametroErrato", sz) == 0){
+		return EINVAL;
+	}
 	
 	return -1;
 }
 
+/** Salva il file nella directory specificata 
+ *   \param directory dove salvare il file
+ *   \param path del file da salvare 
+ *   \param contenuto del file
+ *   \param taglia del contenuto del file 
+ *  
+ *   \retval 0 in caso di successo 
+ *   \retval -1 in caso di errore (errno settato opportunamente) 
+ */
 int save_file(const char *dir, char *file, char *buff, int size){
 
 	char *path_file;
@@ -596,7 +644,7 @@ int save_file(const char *dir, char *file, char *buff, int size){
 		exit(errno_copy);
 	}
 
-	if (stat(dir, &st) == -1) { //se la directory non esiste la creo 
+	if (stat(dir, &st) == -1) { //se la directory non esiste la crea
 		if(mkdir(dir, S_IRWXU) == -1){ 
 			perror("Creazione directory");
 			free(path_file);
@@ -647,7 +695,18 @@ int save_file(const char *dir, char *file, char *buff, int size){
 	return 0;
 }
 
-int comunic_cs(char *cmd, const char *pathname, int *err){ //comunicazione server-client nel caso in cui non si deve inviare contenuto
+/** Funzione che si occupa della comunicazione con il server 
+ *  nel caso in cui non sia previsto che il server invii file al client
+ *  o che il client invii il contenuto di un file al server  
+ *
+ *   \param tipo di operazione da richiedere al server 
+ *   \param path del file di riferimento
+ *   \param variabile dove salvare codice d'errore
+ *  
+ *   \retval 0 in caso di successo 
+ *   \retval -1 in caso di errore (errno settato opportunamente) 
+ */
+int comunic_cs(char *cmd, const char *pathname, int *err){ 
 	char *msg;
 	int n;
 
@@ -659,6 +718,9 @@ int comunic_cs(char *cmd, const char *pathname, int *err){ //comunicazione serve
 	}
 	memset(msg, '\0', MAX_SIZE);
 	
+	//invio richiesta al server nel formato cmd;pathname;sz_cnt 
+	//in questo caso si invia sz_cnt = -1 perchè non ci si aspetta di inviare
+	//il contenuto del file al server in questo tipo di comunicazione 
 	if(msg_sender(msg, cmd, pathname, -1, NULL) == -1){
 		*err = errno;  
 		#ifdef DEBUG
@@ -667,6 +729,7 @@ int comunic_cs(char *cmd, const char *pathname, int *err){ //comunicazione serve
 		free(msg);
 		return -1;
 	}
+	//lettura risposta dal server 
 	if(readn(fd_s, &n, sizeof(int)) == -1){  
 		perror("read socket lato client");
 		*err = errno;
@@ -679,7 +742,8 @@ int comunic_cs(char *cmd, const char *pathname, int *err){ //comunicazione serve
 		free(msg);
 		return -1;
 	}
-	
+	//analisi risposta
+    //se contiene messaggio d'errore viene decodificato e salvato nella variabile err
 	if(strncmp(msg, "Ok", n) != 0){ 
 		#ifdef DEBUG
 			fprintf(stderr, "Errore in %s, msg server: %s\n", cmd, msg);
@@ -692,15 +756,30 @@ int comunic_cs(char *cmd, const char *pathname, int *err){ //comunicazione serve
 	return 0;
 }
 
+/** Funzione per l'invio di richieste al server. 
+ *  Il primo messaggio è nel formato tipo_di_operazione;file_di_riferimento;size_file.
+ *  Se la taglia è >= 0 si invia un secondo messaggio con all'interno il contenuto 
+ *
+ *   \param variabile dove allocare il messaggio 
+ *   \param tipo di richiesta da rivolgere al server 
+ *   \param pathname del file di riferimento 
+ *   \param taglia del contenuto del file (-1 se non significativa)
+ *   \param contenuto del file (null se non significativo)
+ *  
+ *   \retval 0 in caso di successo 
+ *   \retval -1 in caso di errore (errno settato opportunamente) 
+ *
+ */
 int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt){
 	char *str;	
 	int n;
 	
 	if(path != NULL){
+		//creazione primo messaggio di richiesta 
 		strncpy(msg, cmd, MAX_SIZE - 1); 
 		strncat(msg, ";", MAX_SIZE - strlen(msg) -1); 
 
-		strncat(msg, path, MAX_SIZE - strlen(msg) -1); //strncat aggiunge sempre \0 in fondo
+		strncat(msg, path, MAX_SIZE - strlen(msg) -1); 
 		strncat(msg, ";", MAX_SIZE - strlen(msg) -1);
 		
 		if((str = malloc(MAX_SIZE*sizeof(char))) == NULL){
@@ -716,7 +795,7 @@ int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt){
 		strncat(msg, str, MAX_SIZE - strlen(msg) -1);
 
 		n = strlen(msg) + 1;
-		
+		//invio primo messaggio
 		if(writen(fd_s, &n, sizeof(int)) == -1){ //size msg
 			perror("Errore nella write");
 			free(str);
@@ -730,6 +809,7 @@ int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt){
 		free(str);
 		
 		if(size > 0){ 
+			//invio secondo messaggio 
 			if(writen(fd_s, cnt, size) == -1){ //cnt 
 				perror("Write del socket");
 				return -1;
@@ -744,7 +824,19 @@ int msg_sender(char *msg, char *cmd, const char *path, int size, char *cnt){
 	return 0;
 }
 
-int file_receiver(const char *dirname, int fd){
+/** Funzione per la ricezione e il salvataggio di file dal server 
+ *  Si leggono mano a mano path, taglia_contenuto e, 
+ *  se quest'ultima è maggiore di zero, il contenuto del file
+ *  Si interrompe in caso di messaggio d'errore "Err:" o 
+ *  carattere speciale di terminazione "$"
+ *
+ *   \param directory dove salvare i file ricevuti
+ *  
+ *   \retval numero di file letti in caso di successo 
+ *   \retval -1 in caso di errore (errno settato opportunamente) 
+ *
+ */
+int file_receiver(const char *dirname){
 
 	int stop = 0;
 	char *path, *cnt = NULL;
@@ -754,8 +846,8 @@ int file_receiver(const char *dirname, int fd){
 
 	while(!stop){
 		found = 0;
-		
-		if(readn(fd, &sz_msg, sizeof(int)) == -1){ 
+		//lettura path 
+		if(readn(fd_s, &sz_msg, sizeof(int)) == -1){ 
 			perror("read socket lato client");
 			return -1;
 		}
@@ -765,7 +857,7 @@ int file_receiver(const char *dirname, int fd){
 			fprintf(stderr,"FATAL ERROR: malloc\n");
 			exit(errno_copy);
 		}
-		if(readn(fd, path, sz_msg) == -1){ //path o $ o Err 
+		if(readn(fd_s, path, sz_msg) == -1){ //path o $ o Err 
 			perror("read socket lato client");
 			free(path);
 			return -1;
@@ -780,13 +872,15 @@ int file_receiver(const char *dirname, int fd){
 		}
 		if(strncmp(path, "$", UNIX_PATH_MAX) != 0){
 			k++;
-			if(readn(fd, &sz_msg, sizeof(int)) == -1){ 
+			//lettura cnt_sz
+			if(readn(fd_s, &sz_msg, sizeof(int)) == -1){ 
 				perror("read socket lato client");
 				free(path);
 				return -1;
 			}
 			if(sz_msg > 0){
 				found = 1;
+				//lettura contenuto 
 				if((cnt = malloc(sz_msg*sizeof(char))) == NULL){
 					perror("malloc");
 					int errno_copy = errno;
@@ -794,15 +888,16 @@ int file_receiver(const char *dirname, int fd){
 					free(path);
 					exit(errno_copy);
 				}
-				if(readn(fd, cnt, sz_msg) == -1){ //cnt
+				if(readn(fd_s, cnt, sz_msg) == -1){ //cnt
 					perror("read socket lato client");
 					free(path);
 					free(cnt);
 					return -1;
 				}
 			}		
+			//salvataggio file 
 			if(dirname != NULL){
-				if(save_file(dirname, path, cnt, sz_msg) == -1){ //setta errno
+				if(save_file(dirname, path, cnt, sz_msg) == -1){ 
 					perror("Errore in savefile");
 					free(path);
 					if(found)
