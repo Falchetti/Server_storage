@@ -26,7 +26,7 @@ cnt=0
 grep -E "SIGNAL.*${NAMES[i]}|WAIT.*${NAMES[i]}" $1 > $tmpfile 
 exec 3<$tmpfile    # apro il file in lettura e gli assegno il descrittore 3 
 while IFS=" " read -u 3 line; do #leggo riga per riga
-    elem=$(echo $line| cut -d" " -f 1) #prendo il terzo campo
+    elem=$(echo $line| cut -d" " -f 1) #prendo il primo campo (operazione)
 	if [[ "$elem" = "SIGNAL" && "$cnt" != 0 ]]; then 
 		(( cnt -= 1))
 	elif [[ "$elem" = "WAIT" ]];then

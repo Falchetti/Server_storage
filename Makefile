@@ -49,7 +49,7 @@ clean :
 
 cleanall : 
 	-rm -f *.sk objs/*.o $(EXE) log.txt lib/*.a 
-	-rm -r test_files/output_dir/*
+	-rm -r -f test_files/output_dir/*
 	
 test1 : $(EXE)
 	valgrind --leak-check=full ./bin/server -k config/config_1.txt &

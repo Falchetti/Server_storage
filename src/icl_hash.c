@@ -55,8 +55,8 @@ hash_pjw(void* key)
 }
 
 int string_compare(void* a, void* b) 
-{   //fprintf(stderr,"a %s e b %s\n", (char *) a, (char *) b);
-    return (strcmp( (char*)a, (char*)b ) == 0);
+{   
+return (strcmp( (char*)a, (char*)b ) == 0);
 }
 
 
